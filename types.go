@@ -82,9 +82,6 @@ func (ProxyRequest) isProxySpec() {}
 // ResolvedProxyConfig is the proxy the gateway actually assigned. Present on a
 // Session only when managed egress was requested.
 type ResolvedProxyConfig struct {
-	Server     string    `json:"server"`
-	Username   string    `json:"username"`
-	Password   string    `json:"password"`
 	TimezoneID string    `json:"timezoneId"`
 	Country    string    `json:"country"`
 	Tier       ProxyTier `json:"tier,omitempty"`
