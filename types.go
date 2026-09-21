@@ -198,11 +198,6 @@ type CreateSessionOptions struct {
 	Stealth bool
 	// Captcha enables managed captcha solving. Requires Stealth.
 	Captcha bool
-	// WebBotAuth opts in to Cloudflare Web Bot Auth — every outbound HTTP
-	// request is signed with an Ed25519 key registered to Solari's verified
-	// bot directory. Independent of Stealth; silently inert when the acquired
-	// slot has no signing key configured.
-	WebBotAuth bool
 	// Proxy requests managed egress. Requires Stealth. Accepts a ProxyPreset
 	// (ProxyCountry("gb"), ProxySmart, ProxyOff) or a ProxyRequest.
 	Proxy ProxySpec

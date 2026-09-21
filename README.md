@@ -107,7 +107,6 @@ session, err := client.Sessions.Create(ctx, solari.CreateSessionOptions{
 	Recording:  true,       // record the session for replay
 	Stealth:    true,       // runtime stealth shim
 	Captcha:    true,       // managed captcha solving (requires Stealth)
-	WebBotAuth: true,       // sign requests for Cloudflare Web Bot Auth
 	Proxy:      solari.ProxySmart,
 })
 

@@ -28,10 +28,9 @@ func TestCreateSessionRequestShape(t *testing.T) {
 
 	c := newTestClient(t, srv.URL)
 	_, err := c.Sessions.Create(context.Background(), CreateSessionOptions{
-		Recording:  true,
-		Stealth:    true,
-		Captcha:    true,
-		WebBotAuth: true,
+		Recording: true,
+		Stealth:   true,
+		Captcha:   true,
 		Proxy: ProxyRequest{
 			Country:         "us",
 			Tier:            TierMobile,
@@ -49,7 +48,7 @@ func TestCreateSessionRequestShape(t *testing.T) {
 	if gotMethod != http.MethodPost || gotPath != "/sessions" {
 		t.Errorf("request = %s %s, want POST /sessions", gotMethod, gotPath)
 	}
-	for _, k := range []string{"recording", "stealth", "captcha", "webBotAuth"} {
+	for _, k := range []string{"recording", "stealth", "captcha"} {
 		if body[k] != true {
 			t.Errorf("body[%q] = %v, want true", k, body[k])
 		}
@@ -84,7 +83,7 @@ func TestCreateSessionOmitsFalsyKeys(t *testing.T) {
 		},
 		{
 			name:     "false flags are omitted",
-			opts:     CreateSessionOptions{Recording: false, Stealth: false, Captcha: false, WebBotAuth: false},
+			opts:     CreateSessionOptions{Recording: false, Stealth: false, Captcha: false},
 			wantBody: "",
 		},
 		{

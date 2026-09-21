@@ -41,9 +41,6 @@ func (s *Sessions) Create(ctx context.Context, opts CreateSessionOptions) (*Sess
 	if opts.Captcha {
 		body["captcha"] = true
 	}
-	if opts.WebBotAuth {
-		body["webBotAuth"] = true
-	}
 	if opts.Proxy != nil {
 		body["proxy"] = opts.Proxy
 	}
