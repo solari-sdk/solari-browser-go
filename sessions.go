@@ -126,9 +126,10 @@ func (s *Sessions) ReplayURL(ctx context.Context, id string) (*ReplayURL, error)
 	return &res, nil
 }
 
-// DownloadReplay fetches the session's replay bytes (NDJSON, encoded per the
-// ReplayURL's ContentEncoding — "gzip" by default; the bytes are returned
-// exactly as stored, not decompressed).
+// DownloadReplay fetches the session's replay bytes (NDJSON). The bytes may
+// or may not actually be gzip despite what was uploaded — GCS decompresses a
+// gzip object transparently on an ordinary GET, so check ReplayURL's
+// ContentEncoding (now provider-accurate) before attempting to decompress.
 func (s *Sessions) DownloadReplay(ctx context.Context, id string) ([]byte, error) {
 	link, err := s.ReplayURL(ctx, id)
 	if err != nil {
