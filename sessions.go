@@ -51,7 +51,7 @@ func (s *Sessions) Create(ctx context.Context, opts CreateSessionOptions) (*Sess
 	}
 
 	var data createSessionResponse
-	if err := s.client.http.request(ctx, http.MethodPost, "/sessions", payload, httpRequestOptions{}, &data); err != nil {
+	if err := s.client.http.request(ctx, http.MethodPost, "/sessions", payload, httpRequestOptions{idempotencyKey: newIdempotencyKey()}, &data); err != nil {
 		return nil, err
 	}
 	if data.SessionID == "" || data.WSEndpoint == "" {
