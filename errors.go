@@ -20,6 +20,10 @@ const (
 	CodePlanLimitExceeded = "PlanLimitExceeded"
 	// CodeBrowserUnhealthy — the acquired browser failed its health check.
 	CodeBrowserUnhealthy = "BrowserUnhealthy"
+	// CodeInvalidSessionId — the gateway refused a session id (malformed,
+	// forged, or another org's) and acted on nothing. Only meaningful on a
+	// 404; see Sessions.Release for why that is not blanket-success.
+	CodeInvalidSessionId = "InvalidSessionId"
 )
 
 // SolariError is the single error type the SDK produces. Match it with

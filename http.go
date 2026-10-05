@@ -92,6 +92,13 @@ type httpRequestOptions struct {
 	// tolerateNotFound makes a 404 a success (nothing is decoded into out) —
 	// used by the idempotent DELETE paths.
 	tolerateNotFound bool
+	// rejectNotFoundCode carves one error code back out of tolerateNotFound: a
+	// 404 whose body carries this code is returned as an error instead of being
+	// swallowed. Empty means "tolerate every 404". Set by Sessions.Release so a
+	// refused session id is not mistaken for an already-released one; the other
+	// idempotent DELETEs (profiles) leave it empty, where a 404 really does mean
+	// "already gone".
+	rejectNotFoundCode string
 }
 
 // isRetryableStatus reports whether a status warrants another attempt. Only the
@@ -175,8 +182,15 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 		// A 404 tolerated here is swallowed before the retryable-hint case
 		// below, so it is never retried. No route needs both today (the
 		// hint's live case, 404 ReplayPending, is on GET replay-url, which
-		// does not tolerate 404).
+		// does not tolerate 404). ORDER IS ALSO LOAD-BEARING against
+		// rejectNotFoundCode just below: a rejected 404 fails FAST here,
+		// before the retryable-hint case ever sees it — a refused session id
+		// is permanently invalid and retrying it just burns attempts.
 		case status == http.StatusNotFound && opts.tolerateNotFound:
+			if opts.rejectNotFoundCode != "" &&
+				parseErrorCode(raw) == opts.rejectNotFoundCode {
+				return newHTTPError(method, path, status, raw)
+			}
 			return nil
 		case !isRetryableStatus(status) &&
 			!(isSafeToReplay(method, opts.idempotencyKey) && saysRetryable(raw)):

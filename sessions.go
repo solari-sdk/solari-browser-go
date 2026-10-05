@@ -103,10 +103,22 @@ func (s *Sessions) Get(ctx context.Context, id string) (*SessionView, error) {
 }
 
 // Release ends a session (DELETE /sessions/:id) and waits for the gateway to
-// acknowledge. Idempotent: an already-gone session (404) is not an error.
+// acknowledge. Idempotent: an already-gone session (bare 404) is not an error.
+//
+// A 404 carrying CodeInvalidSessionId IS an error. The gateway acks 204 for any
+// authentic session id, including one whose session has already ended — the
+// handler is idempotent by design and never consults the pool before acking. So
+// a 404 does not mean "already released"; it means the gateway refused the id
+// (malformed, forged, or another org's) and released nothing, leaving the pool
+// slot held until orphan-grace. Treating that as success is what made these
+// releases leak slots silently.
+//
+// A bare 404 with no code stays tolerated — that is a pre-InvalidSessionId
+// gateway, where a 404 may legitimately mean the session is already gone.
+// Mirrors releaseRejection in sdk/src/index.ts.
 func (s *Sessions) Release(ctx context.Context, id string) error {
 	return s.client.http.request(ctx, http.MethodDelete, "/sessions/"+url.PathEscape(id), nil,
-		httpRequestOptions{tolerateNotFound: true}, nil)
+		httpRequestOptions{tolerateNotFound: true, rejectNotFoundCode: CodeInvalidSessionId}, nil)
 }
 
 // ReplayURL returns a presigned link to the session's replay
