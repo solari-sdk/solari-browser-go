@@ -5,12 +5,14 @@ package solari
 //
 // Retry policy (matches the reference TypeScript SDK): every request is tried
 // up to maxAttempts times, waiting a FIXED backoffMs between attempts (not
-// exponential). Only transport errors and HTTP 502/503/504 are retried — every
+// exponential). Transport errors and HTTP 502/503/504 are retried, as is any
+// IDEMPOTENT request the gateway explicitly marked `"retryable": true` — every
 // other status is returned to the caller as-is, including 429.
 
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -83,6 +85,10 @@ func (t *httpTransport) authHeader() string { return "Bearer " + t.apiKey }
 
 // httpRequestOptions carry per-request knobs.
 type httpRequestOptions struct {
+	// idempotencyKey, when set, is sent as `Idempotency-Key` on EVERY attempt
+	// of this call and makes the request safe to replay. Minted once by the
+	// caller: a key per attempt would make each retry a fresh create.
+	idempotencyKey string
 	// tolerateNotFound makes a 404 a success (nothing is decoded into out) —
 	// used by the idempotent DELETE paths.
 	tolerateNotFound bool
@@ -91,9 +97,58 @@ type httpRequestOptions struct {
 // isRetryableStatus reports whether a status warrants another attempt. Only the
 // gateway's "try again" statuses qualify.
 func isRetryableStatus(status int) bool {
+	// 507 is listed although THIS gateway does not emit one (censused 2026-09-22:
+	// browser emits 501/502/503 only). Desktop's InsufficientCapacity 507 is
+	// transient, and a client's correctness must not depend on which gateway build
+	// it reaches. Inert today, deliberately — do not remove it as dead code.
 	return status == http.StatusBadGateway ||
 		status == http.StatusServiceUnavailable ||
-		status == http.StatusGatewayTimeout
+		status == http.StatusGatewayTimeout ||
+		status == http.StatusInsufficientStorage
+}
+
+// isSafeToReplay reports whether THIS REQUEST may be sent again. Deliberately
+// a per-request question, not a per-method one: a POST is not idempotent by
+// verb, but a POST carrying an Idempotency-Key is safe to replay because the
+// server answers the second copy from the first one's result.
+//
+// RETRACTED REASON, kept deliberately: this used to be method-only, because
+// "the browser API issues no Idempotency-Key, so a re-sent POST /sessions
+// could leave a second live session behind". Creates now mint one, so the
+// condition was removed rather than worked around.
+func isSafeToReplay(method, idempotencyKey string) bool {
+	return isIdempotentMethod(method) || idempotencyKey != ""
+}
+
+// newIdempotencyKey mints a key identifying a CALL, reused by its retries.
+func newIdempotencyKey() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("slr-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("slr-%x", b)
+}
+
+// isIdempotentMethod reports whether a METHOD is safe to send twice.
+func isIdempotentMethod(method string) bool {
+	switch strings.ToUpper(method) {
+	case http.MethodGet, http.MethodHead, http.MethodDelete, http.MethodPut:
+		return true
+	}
+	return false
+}
+
+// saysRetryable reports whether the gateway explicitly marked this response
+// retryable. The flag can appear on a status OUTSIDE the 5xx allowlist — today
+// `404 ReplayPending`, where the recording upload is still in flight.
+func saysRetryable(raw []byte) bool {
+	var body struct {
+		Retryable *bool `json:"retryable"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return false // non-JSON body carries no hint
+	}
+	return body.Retryable != nil && *body.Retryable
 }
 
 // request performs a REST call and decodes the JSON response into out (which
@@ -110,16 +165,21 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 
 	var lastErr error
 	for attempt := 1; ; attempt++ {
-		status, raw, err := t.attempt(ctx, method, path, bodyBytes)
+		status, raw, err := t.attempt(ctx, method, path, bodyBytes, opts.idempotencyKey)
 		switch {
 		case err != nil:
 			// Transport/network failure — always retryable.
 			lastErr = err
 		case status >= 200 && status < 300:
 			return decodeInto(method, path, raw, out)
+		// A 404 tolerated here is swallowed before the retryable-hint case
+		// below, so it is never retried. No route needs both today (the
+		// hint's live case, 404 ReplayPending, is on GET replay-url, which
+		// does not tolerate 404).
 		case status == http.StatusNotFound && opts.tolerateNotFound:
 			return nil
-		case !isRetryableStatus(status):
+		case !isRetryableStatus(status) &&
+			!(isSafeToReplay(method, opts.idempotencyKey) && saysRetryable(raw)):
 			return newHTTPError(method, path, status, raw)
 		default:
 			lastErr = newHTTPError(method, path, status, raw)
@@ -135,7 +195,7 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 }
 
 // attempt performs one round-trip and fully reads the body.
-func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBytes []byte) (int, []byte, error) {
+func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBytes []byte, idempotencyKey string) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, method, t.baseURL+path, bytesReader(bodyBytes))
 	if err != nil {
 		return 0, nil, &SolariError{
@@ -145,6 +205,9 @@ func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBy
 	}
 	req.Header.Set("Authorization", t.authHeader())
 	req.Header.Set("Content-Type", "application/json")
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
 
 	res, err := t.httpClient.Do(req)
 	if err != nil {
