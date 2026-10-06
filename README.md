@@ -16,14 +16,18 @@ Requires Go 1.23+ and `github.com/chromedp/chromedp`.
 > the **desktop/sandbox** SDK (microVMs, commands, files, code). This one is the
 > **browser** platform.
 
-## Scope: control plane + `Connect`
+## Scope: control plane + browser attachment
 
-This SDK is the REST control plane plus a `Connect` helper. The TypeScript SDK's
-`launch()` returns a live **Playwright** `Browser` — Playwright has no Go client,
-so that is deliberately not ported.
+This SDK is the REST control plane plus two levels of browser attachment. The
+TypeScript SDK's `launch()` returns a live **Playwright** `Browser` — Playwright
+has no Go client, so there is no port of that object model, and there won't be
+one.
 
 Instead, `Sessions.Create` hands back the session's **raw CDP endpoint**, and you
-drive the browser with [chromedp](https://github.com/chromedp/chromedp). Both
+drive the browser with [chromedp](https://github.com/chromedp/chromedp), either
+directly via `Connect`, or in one call via `Sessions.Launch` (create, connect,
+seed an attached profile's cookies, health-probe, retry, release on `Close` —
+added 2026-10-06, previously missing here while TS/Python had it). Both
 endpoints are returned exactly as the gateway issued them — unlike the Node SDK,
 nothing is rewritten to a loopback proxy.
 
@@ -98,6 +102,37 @@ func main() {
 `chromedp.Run`, and failures surface there. `cancel()` detaches the client; it
 does **not** release the session, which keeps running until `Sessions.Release`
 or its `ExpiresAt` deadline.
+
+### One-call `Launch`
+
+Create + connect + seed + probe + retry + release, in one call:
+
+```go
+launched, err := client.Sessions.Launch(ctx, solari.LaunchOptions{
+	Create:  solari.CreateSessionOptions{Stealth: true},
+	Retries: 2,
+})
+if err != nil {
+	log.Fatal(err)
+}
+defer launched.Close(context.Background())
+
+var title string
+if err := chromedp.Run(launched.Browser, chromedp.Navigate("https://example.com"), chromedp.Title(&title)); err != nil {
+	log.Fatal(err)
+}
+log.Println("title:", title)
+```
+
+An attached profile's **cookies** are seeded into the live browser automatically;
+`localStorage` is not (Playwright restores it for free on the TS/Python path,
+chromedp has no equivalent) — seed it yourself against `launched.Browser` if you
+need it. `Retries` controls the whole create+connect+probe sequence, not
+individual HTTP requests (that's `MaxAttempts` on `ClientOptions` above) — on a
+transient failure the dead session is released and a fresh one created. Unlike
+the TS/Rust handles, there is no implicit release on GC — `Close` (or a `defer`)
+is required for a prompt release, or the session lingers until its plan-tier
+expiry.
 
 ## Sessions
 
