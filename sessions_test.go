@@ -496,17 +496,23 @@ func TestSessionsGet(t *testing.T) {
 	}
 }
 
-// Release is idempotent: a 404 is a success.
+// Release is idempotent: a BARE 404 is a success. A 404 the gateway marked
+// InvalidSessionId is NOT — it released nothing and the pool slot is still held.
 func TestSessionsRelease(t *testing.T) {
 	tests := []struct {
 		name    string
 		status  int
+		body    string
 		wantErr bool
 	}{
-		{"204 succeeds", 204, false},
-		{"200 succeeds", 200, false},
-		{"404 is tolerated", 404, false},
-		{"400 fails", 400, true},
+		{"204 succeeds", 204, "", false},
+		{"200 succeeds", 200, "", false},
+		{"bare 404 is tolerated", 404, "", false},
+		{"404 with no code is tolerated (pre-InvalidSessionId gateway)", 404, `{"error":"Not Found"}`, false},
+		{"404 with an unrelated code is tolerated", 404, `{"error":"Not Found","code":"SomethingElse"}`, false},
+		{"404 InvalidSessionId FAILS — nothing was released", 404, `{"error":"Not Found","code":"InvalidSessionId"}`, true},
+		{"404 InvalidSessionId in a non-JSON body is tolerated", 404, `InvalidSessionId`, false},
+		{"400 fails", 400, "", true},
 	}
 
 	for _, tc := range tests {
@@ -514,7 +520,13 @@ func TestSessionsRelease(t *testing.T) {
 			var gotMethod, gotPath string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				gotMethod, gotPath = r.Method, r.URL.Path
+				if tc.body != "" {
+					w.Header().Set("Content-Type", "application/json")
+				}
 				w.WriteHeader(tc.status)
+				if tc.body != "" {
+					_, _ = w.Write([]byte(tc.body))
+				}
 			}))
 			defer srv.Close()
 
