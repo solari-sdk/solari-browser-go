@@ -2,10 +2,12 @@
 // create, inspect, and release managed remote-browser sessions, and manage the
 // stored profiles they attach.
 //
-// Scope: this SDK is the REST control plane plus a Connect helper. The
-// reference TypeScript SDK's launch() returns a live Playwright Browser, which
-// has no Go equivalent — Sessions.Create hands back the raw CDP endpoint
-// instead, and Connect drives it with chromedp. See the README.
+// Scope: this SDK is the REST control plane plus browser attachment. The
+// reference TypeScript SDK's launch() returns a live Playwright Browser; Go has
+// no Playwright, so chromedp drives a session instead. Sessions.Create hands
+// back the raw CDP endpoint for Connect, and Sessions.Launch is a thin one-call
+// convenience (create, connect, seed cookies, probe, retry, release) that hands
+// back a chromedp browser context to drive. See the README.
 package solari
 
 import (
