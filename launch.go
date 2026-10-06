@@ -147,10 +147,20 @@ func (s *Sessions) Launch(ctx context.Context, opts LaunchOptions) (*LaunchedSes
 
 // isTransient reports whether a create/connect failure is worth retrying (as
 // opposed to a config or auth error, which will fail again identically).
+//
+// Status == 0 covers two distinct origins that SolariError does not
+// distinguish: a transport failure (no HTTP response at all -- retryable)
+// and a locally-constructed validation error from newSolariError, e.g.
+// Connect's "session has no cdpEndpoint to connect to" (not retryable --
+// the same input reproduces it every time). Treating both as transient is a
+// known, accepted gap: today every newSolariError call Connect/ConnectCDP can
+// reach is guarded by validation earlier in Create, so the gap is currently
+// unreachable through any live caller. A future direct call to
+// Connect/ConnectCDP with a malformed Session, or a relaxation of Create's
+// validation, would hit it for real -- re-examine this if either changes.
 func isTransient(err error) bool {
 	var serr *SolariError
 	if errors.As(err, &serr) {
-		// Status 0 is a transport failure; 5xx is a server-side transient.
 		return serr.Status == 0 || serr.Status >= 500
 	}
 	return true
