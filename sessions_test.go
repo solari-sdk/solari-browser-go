@@ -171,7 +171,7 @@ func TestCreateSessionReturnsUpstreamEndpoints(t *testing.T) {
 			"cdpEndpoint": "wss://api.getsolari.com/cdp/org1:pool2:sess3",
 			"expiresAt": "2026-07-16T12:00:00.000Z",
 			"proxy": {
-				"server": "http://gate.decodo.com:7000",
+				"server": "http://proxy.example.com:7000",
 				"username": "user-1",
 				"password": "pw",
 				"timezoneId": "America/Los_Angeles",
