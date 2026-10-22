@@ -24,6 +24,10 @@ const (
 	// forged, or another org's) and acted on nothing. Only meaningful on a
 	// 404; see Sessions.Release for why that is not blanket-success.
 	CodeInvalidSessionId = "InvalidSessionId"
+	// CodeProxyTierUnavailable — POST /sessions 503: a proxy tier you
+	// explicitly requested cannot be served right now. No session was
+	// created. The client does not retry it.
+	CodeProxyTierUnavailable = "ProxyTierUnavailable"
 )
 
 // SolariError is the single error type the SDK produces. Match it with
