@@ -145,6 +145,11 @@ func isIdempotentMethod(method string) bool {
 	return false
 }
 
+// isTerminal503 reports whether a 503 body carries a code that retrying cannot change.
+func isTerminal503(raw []byte) bool {
+	return parseErrorCode(raw) == CodeProxyTierUnavailable
+}
+
 // saysRetryable reports whether the gateway explicitly marked this response
 // retryable. The flag can appear on a status OUTSIDE the 5xx allowlist — today
 // `404 ReplayPending`, where the recording upload is still in flight.
@@ -192,6 +197,11 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 				return newHTTPError(method, path, status, raw)
 			}
 			return nil
+		// A few 503s are answers, not outages: retrying cannot change them, and the
+		// caller needs the code. ProxyTierUnavailable (an explicitly requested proxy
+		// tier cannot be served) is one.
+		case status == http.StatusServiceUnavailable && isTerminal503(raw):
+			return newHTTPError(method, path, status, raw)
 		case !isRetryableStatus(status) &&
 			!(isSafeToReplay(method, opts.idempotencyKey) && saysRetryable(raw)):
 			return newHTTPError(method, path, status, raw)
