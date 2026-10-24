@@ -9,7 +9,7 @@ import (
 
 // REGRESSION GUARD for the shipped fix. ResolvedProxyConfig used to carry
 // Server/Username/Password. The gateway stopped sending them (they disclose the
-// proxy vendor's account), so the bindings parsed empty strings forever — a
+// upstream proxy account), so the bindings parsed empty strings forever — a
 // contract that was not just dead but actively misleading: a caller could read
 // sess.Proxy.Server, get "", and conclude no proxy was applied.
 //
@@ -61,7 +61,7 @@ func TestResolvedProxyConfigIgnoresLegacyCredentialKeys(t *testing.T) {
 		t.Fatalf("resolved proxy = %+v", got)
 	}
 
-	// Round-trip: nothing a caller can serialise carries the vendor account.
+	// Round-trip: nothing a caller can serialise carries the upstream proxy account.
 	b, err := json.Marshal(got)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
