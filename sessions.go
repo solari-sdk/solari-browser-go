@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -44,6 +45,15 @@ func (s *Sessions) Create(ctx context.Context, opts CreateSessionOptions) (*Sess
 	if opts.Proxy != nil {
 		body["proxy"] = opts.Proxy
 	}
+	if opts.TimeoutSeconds != 0 {
+		body["timeoutSeconds"] = opts.TimeoutSeconds
+	}
+	if opts.KeepAlive {
+		body["keepAlive"] = true
+	}
+	if opts.UserMetadata != nil {
+		body["userMetadata"] = opts.UserMetadata
+	}
 	// An empty options set sends no body at all.
 	var payload interface{}
 	if len(body) > 0 {
@@ -68,11 +78,12 @@ func (s *Sessions) Create(ctx context.Context, opts CreateSessionOptions) (*Sess
 	}
 
 	session := &Session{
-		ID:          data.SessionID,
-		WSEndpoint:  data.WSEndpoint,
-		CDPEndpoint: cdp,
-		ExpiresAt:   expiresAt,
-		Proxy:       data.Proxy,
+		ID:           data.SessionID,
+		WSEndpoint:   data.WSEndpoint,
+		CDPEndpoint:  cdp,
+		ExpiresAt:    expiresAt,
+		Proxy:        data.Proxy,
+		UserMetadata: data.UserMetadata,
 	}
 
 	// A storage state is only meaningful when a profile was attached. nil then
@@ -100,6 +111,63 @@ func (s *Sessions) Get(ctx context.Context, id string) (*SessionView, error) {
 		return nil, err
 	}
 	return &view, nil
+}
+
+// List returns one page of the organisation's sessions, newest first as the
+// gateway orders them (GET /sessions). Rows never carry the websocket
+// endpoints; call Get for those. Page with ListSessionsOptions.Cursor.
+func (s *Sessions) List(ctx context.Context, opts ListSessionsOptions) (*SessionList, error) {
+	q := url.Values{}
+	if opts.Limit > 0 {
+		q.Set("limit", fmt.Sprint(opts.Limit))
+	}
+	if opts.Cursor != "" {
+		q.Set("cursor", opts.Cursor)
+	}
+	if len(opts.Metadata) > 0 {
+		filter, err := metadataFilter(opts.Metadata)
+		if err != nil {
+			return nil, err
+		}
+		q.Set("q", filter)
+	}
+	path := "/sessions"
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	var list SessionList
+	if err := s.client.http.request(ctx, http.MethodGet, path, nil, httpRequestOptions{}, &list); err != nil {
+		return nil, err
+	}
+	if list.Sessions == nil {
+		list.Sessions = []SessionSummary{}
+	}
+	return &list, nil
+}
+
+// maxMetadataClauses is the most key/value pairs the gateway accepts in a list filter.
+const maxMetadataClauses = 10
+
+// metadataFilter renders the gateway's list filter grammar:
+// user_metadata['key']:'value' clauses joined by AND, in key order.
+func metadataFilter(m map[string]string) (string, error) {
+	if len(m) > maxMetadataClauses {
+		return "", newSolariError(fmt.Sprintf("Solari: at most %d metadata filter pairs", maxMetadataClauses))
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	clauses := make([]string, 0, len(keys))
+	for _, k := range keys {
+		v := m[k]
+		if k == "" || len(k) > 128 || strings.Contains(k, "'") || strings.Contains(v, "'") {
+			return "", newSolariError(fmt.Sprintf("Solari: metadata filter key %q or its value cannot be expressed (1-128 characters, no single quote)", k))
+		}
+		clauses = append(clauses, "user_metadata['"+k+"']:'"+v+"'")
+	}
+	return strings.Join(clauses, " AND "), nil
 }
 
 // Release ends a session (DELETE /sessions/:id) and waits for the gateway to

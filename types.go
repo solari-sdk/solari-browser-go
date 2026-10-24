@@ -201,6 +201,16 @@ type CreateSessionOptions struct {
 	// Proxy requests managed egress. Requires Stealth. Accepts a ProxyPreset
 	// (ProxyCountry("gb"), ProxySmart, ProxyOff) or a ProxyRequest.
 	Proxy ProxySpec
+	// TimeoutSeconds ends the session earlier than the plan maximum. Zero (the
+	// default) leaves the plan maximum; the gateway refuses anything under 60.
+	TimeoutSeconds int
+	// KeepAlive holds the session after the client disconnects, until its
+	// deadline (TimeoutSeconds, else an hour, never past the plan maximum) or
+	// until it is released, so a dropped client can reconnect.
+	KeepAlive bool
+	// UserMetadata is free-form JSON stored with the session and returned by
+	// Get and List (job ids, labels, ...). List can filter on string values.
+	UserMetadata map[string]interface{}
 }
 
 // Session is a live remote-browser session.
@@ -227,17 +237,27 @@ type Session struct {
 	// Proxy is the resolved egress. Non-nil only when a managed proxy was
 	// requested.
 	Proxy *ResolvedProxyConfig
+	// UserMetadata echoes the metadata sent at create. Nil when none was sent.
+	UserMetadata map[string]interface{}
 }
 
 // SessionView is the gateway's current view of a session (Sessions.Get). The
-// gateway proxies this straight from the pool host, so the payload is
-// pool-versioned: the commonly-present fields are lifted out and the full body
-// is retained in Raw.
+// commonly-present fields are lifted out and the full body is retained in Raw.
 type SessionView struct {
 	ID        string `json:"id,omitempty"`
 	SessionID string `json:"sessionId,omitempty"`
 	Status    string `json:"status,omitempty"`
+	// Kind is the pool flavour that served the session ("fast" or "stealth").
+	Kind string `json:"kind,omitempty"`
+	// Org is the owning organisation id.
+	Org       string `json:"org,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
 	ExpiresAt string `json:"expiresAt,omitempty"`
+	// UserMetadata is what was sent at create; nil when none was.
+	UserMetadata map[string]interface{} `json:"userMetadata,omitempty"`
+	// WSEndpoint and CDPEndpoint are present while the session is active.
+	WSEndpoint  string `json:"wsEndpoint,omitempty"`
+	CDPEndpoint string `json:"cdpEndpoint,omitempty"`
 	// Raw is the complete response body as received.
 	Raw json.RawMessage `json:"-"`
 }
@@ -252,6 +272,36 @@ func (v *SessionView) UnmarshalJSON(raw []byte) error {
 	*v = SessionView(a)
 	v.Raw = append(json.RawMessage(nil), raw...)
 	return nil
+}
+
+// SessionSummary is one row of Sessions.List. It never carries the websocket
+// endpoints: those are bearer capabilities, so use Get for a single session.
+type SessionSummary struct {
+	ID           string                 `json:"id"`
+	Status       string                 `json:"status"`
+	Kind         string                 `json:"kind,omitempty"`
+	CreatedAt    string                 `json:"createdAt,omitempty"`
+	ExpiresAt    string                 `json:"expiresAt,omitempty"`
+	UserMetadata map[string]interface{} `json:"userMetadata,omitempty"`
+}
+
+// SessionList is one page of Sessions.List.
+type SessionList struct {
+	Sessions []SessionSummary `json:"sessions"`
+	// NextCursor is empty on the last page; pass it as ListSessionsOptions.Cursor.
+	NextCursor string `json:"nextCursor,omitempty"`
+}
+
+// ListSessionsOptions filter and page Sessions.List. The zero value lists the
+// first page with the gateway's default size.
+type ListSessionsOptions struct {
+	// Limit is the page size; zero uses the gateway default.
+	Limit int
+	// Cursor continues from a previous page's NextCursor.
+	Cursor string
+	// Metadata keeps sessions whose UserMetadata has all these string values
+	// (at most 10 pairs; keys and values cannot contain a single quote).
+	Metadata map[string]string
 }
 
 // ReplayURL is a presigned link to a session's recording.
@@ -280,13 +330,14 @@ type SaveResult struct {
 
 // createSessionResponse is the raw POST /sessions body.
 type createSessionResponse struct {
-	SessionID       string               `json:"sessionId"`
-	WSEndpoint      string               `json:"wsEndpoint"`
-	CDPEndpoint     string               `json:"cdpEndpoint"`
-	ExpiresAt       string               `json:"expiresAt"`
-	StorageStateURL *storageStateURL     `json:"storageStateUrl"`
-	StorageState    *StorageState        `json:"storageState"`
-	Proxy           *ResolvedProxyConfig `json:"proxy"`
+	SessionID       string                 `json:"sessionId"`
+	WSEndpoint      string                 `json:"wsEndpoint"`
+	CDPEndpoint     string                 `json:"cdpEndpoint"`
+	ExpiresAt       string                 `json:"expiresAt"`
+	StorageStateURL *storageStateURL       `json:"storageStateUrl"`
+	StorageState    *StorageState          `json:"storageState"`
+	Proxy           *ResolvedProxyConfig   `json:"proxy"`
+	UserMetadata    map[string]interface{} `json:"userMetadata"`
 }
 
 // storageStateURL is the presigned pointer to a profile's storage state.
