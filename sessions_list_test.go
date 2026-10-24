@@ -178,3 +178,35 @@ func TestSessionsListGatewayValidationError(t *testing.T) {
 		t.Errorf("err = %v, want code ValidationError", err)
 	}
 }
+
+// ReleaseAndWait is Release under the TS/Python name: same request, same 404 rules.
+func TestReleaseAndWaitMatchesRelease(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status  int
+		body    string
+		wantErr bool
+	}{
+		"204 acked":                        {204, "", false},
+		"bare 404 is already gone":         {404, `{"error":"Not Found"}`, false},
+		"404 InvalidSessionId is an error": {404, `{"error":"Not Found","code":"InvalidSessionId"}`, true},
+	} {
+		var method, path string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			method, path = r.Method, r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(tc.body))
+		}))
+		err := newTestClient(t, srv.URL).Sessions.ReleaseAndWait(context.Background(), "s1")
+		srv.Close()
+		if method != http.MethodDelete || path != "/sessions/s1" {
+			t.Errorf("%s: request = %s %s, want DELETE /sessions/s1", name, method, path)
+		}
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%s: err = %v, want error=%v", name, err, tc.wantErr)
+		}
+		if tc.wantErr && !IsCode(err, CodeInvalidSessionId) {
+			t.Errorf("%s: code not surfaced: %v", name, err)
+		}
+	}
+}

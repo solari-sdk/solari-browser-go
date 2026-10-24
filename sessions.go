@@ -189,6 +189,17 @@ func (s *Sessions) Release(ctx context.Context, id string) error {
 		httpRequestOptions{tolerateNotFound: true, rejectNotFoundCode: CodeInvalidSessionId}, nil)
 }
 
+// ReleaseAndWait is Release under the name the TypeScript (releaseAndWait) and
+// Python (release_and_wait) SDKs use: it sends DELETE /sessions/:id and returns
+// once the gateway has acknowledged it, with the same rules for a 404.
+//
+// Go has no fire-and-forget variant, so Release already waits for the
+// acknowledgement and the two are interchangeable. Neither waits for the pool to
+// finish tearing the browser down, which the gateway does after its 204.
+func (s *Sessions) ReleaseAndWait(ctx context.Context, id string) error {
+	return s.Release(ctx, id)
+}
+
 // ReplayURL returns a presigned link to the session's replay
 // (GET /sessions/:id/replay-url). Available ~1-3s after Release, and only for
 // sessions created with Recording.

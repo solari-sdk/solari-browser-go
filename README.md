@@ -157,7 +157,8 @@ page, err := client.Sessions.List(ctx, solari.ListSessionsOptions{
 	Limit:    50,
 	Metadata: map[string]string{"job": "nightly-42"}, // optional: match userMetadata
 })                                                          // page.Sessions, page.NextCursor
-err = client.Sessions.Release(ctx, session.ID)             // idempotent
+err = client.Sessions.Release(ctx, session.ID)             // idempotent; waits for the ack
+err = client.Sessions.ReleaseAndWait(ctx, session.ID)      // same call, named like TS releaseAndWait / Python release_and_wait
 link, err := client.Sessions.ReplayURL(ctx, session.ID)    // presigned replay link
 raw, err := client.Sessions.DownloadReplay(ctx, session.ID) // replay bytes (NDJSON)
 ```
