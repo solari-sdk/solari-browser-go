@@ -145,9 +145,19 @@ func isIdempotentMethod(method string) bool {
 	return false
 }
 
-// isTerminal503 reports whether a 503 body carries a code that retrying cannot change.
-func isTerminal503(raw []byte) bool {
-	return parseErrorCode(raw) == CodeProxyTierUnavailable
+// isTerminal reports whether a retryable-status response is an answer, not an
+// outage. The gateway says so itself with `retryable: false` (502
+// PoolResponseUnparseable: the session may already exist, so a retry creates a
+// second one; 503 EgressBlockPeekUnsupportedOnFlavor). A 503
+// ProxyTierUnavailable is also terminal, whatever its flag.
+func isTerminal(status int, raw []byte) bool {
+	var body struct {
+		Retryable *bool `json:"retryable"`
+	}
+	if json.Unmarshal(raw, &body) == nil && body.Retryable != nil && !*body.Retryable {
+		return true
+	}
+	return status == http.StatusServiceUnavailable && parseErrorCode(raw) == CodeProxyTierUnavailable
 }
 
 // saysRetryable reports whether the gateway explicitly marked this response
@@ -197,10 +207,9 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 				return newHTTPError(method, path, status, raw)
 			}
 			return nil
-		// A few 503s are answers, not outages: retrying cannot change them, and the
-		// caller needs the code. ProxyTierUnavailable (an explicitly requested proxy
-		// tier cannot be served) is one.
-		case status == http.StatusServiceUnavailable && isTerminal503(raw):
+		// Some 5xx are answers, not outages: retrying cannot change them, and the
+		// caller needs the code (see isTerminal).
+		case isRetryableStatus(status) && isTerminal(status, raw):
 			return newHTTPError(method, path, status, raw)
 		case !isRetryableStatus(status) &&
 			!(isSafeToReplay(method, opts.idempotencyKey) && saysRetryable(raw)):
