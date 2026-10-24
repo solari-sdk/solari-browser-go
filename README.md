@@ -12,6 +12,9 @@ go get github.com/solari-sdk/solari-browser-go
 Module path: `github.com/solari-sdk/solari-browser-go`, package `solari`.
 Requires Go 1.23+ and `github.com/chromedp/chromedp`.
 
+Feature coverage across all five languages is on the
+[SDK feature matrix](https://docs.getsolari.com/sdk-capabilities).
+
 > Not to be confused with `github.com/solari-sdk/solari-sandbox-go` — that is
 > the **desktop/sandbox** SDK (microVMs, commands, files, code). This one is the
 > **browser** platform.
@@ -143,13 +146,25 @@ session, err := client.Sessions.Create(ctx, solari.CreateSessionOptions{
 	Stealth:    true,       // runtime stealth shim
 	Captcha:    true,       // managed captcha solving (requires Stealth)
 	Proxy:      solari.ProxySmart,
+
+	TimeoutSeconds: 600,    // end earlier than the plan maximum (at least 60)
+	KeepAlive:      true,   // hold the session if the client drops, until its deadline or Release
+	UserMetadata:   map[string]interface{}{"job": "nightly-42"}, // stored with the session
 })
 
 view, err := client.Sessions.Get(ctx, session.ID)          // current view
+page, err := client.Sessions.List(ctx, solari.ListSessionsOptions{
+	Limit:    50,
+	Metadata: map[string]string{"job": "nightly-42"}, // optional: match userMetadata
+})                                                          // page.Sessions, page.NextCursor
 err = client.Sessions.Release(ctx, session.ID)             // idempotent
 link, err := client.Sessions.ReplayURL(ctx, session.ID)    // presigned replay link
 raw, err := client.Sessions.DownloadReplay(ctx, session.ID) // replay bytes (NDJSON)
 ```
+
+`List` never returns the websocket endpoints (they are bearer capabilities): call
+`Get` for a single session's endpoints. Pass `page.NextCursor` as
+`ListSessionsOptions.Cursor` for the next page; it is empty on the last one.
 
 The zero `CreateSessionOptions` is valid and requests a plain session. `Release`
 and `Profiles.Delete` tolerate a 404, so they are safe to call twice.
