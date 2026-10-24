@@ -147,7 +147,7 @@ session, err := client.Sessions.Create(ctx, solari.CreateSessionOptions{
 	Captcha:    true,       // managed captcha solving (requires Stealth)
 	Proxy:      solari.ProxySmart,
 
-	TimeoutSeconds: 600,    // end earlier than the plan maximum (at least 60)
+	SessionTimeoutMs: 600000, // end earlier than the plan maximum, in ms (at least 60000)
 	KeepAlive:      true,   // hold the session if the client drops, until its deadline or Release
 	UserMetadata:   map[string]interface{}{"job": "nightly-42"}, // stored with the session
 })
@@ -161,6 +161,15 @@ err = client.Sessions.Release(ctx, session.ID)             // idempotent
 link, err := client.Sessions.ReplayURL(ctx, session.ID)    // presigned replay link
 raw, err := client.Sessions.DownloadReplay(ctx, session.ID) // replay bytes (NDJSON)
 ```
+
+All durations are milliseconds. `SessionTimeoutMs` is rounded up to whole seconds
+for the gateway (1001 ms is 2 s) and the gateway refuses anything under 60 s; a
+negative value is an error and zero leaves the plan maximum. Launch's probe bound is
+`LaunchOptions.ProbeTimeoutMs`.
+
+**Deprecated:** `CreateSessionOptions.TimeoutSeconds` and `LaunchOptions.ProbeTimeout`
+still work; use `SessionTimeoutMs` and `ProbeTimeoutMs`. When both are set the new
+one wins. They will not be removed before the next major release.
 
 `List` never returns the websocket endpoints (they are bearer capabilities): call
 `Get` for a single session's endpoints. Pass `page.NextCursor` as

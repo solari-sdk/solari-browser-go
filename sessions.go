@@ -45,8 +45,12 @@ func (s *Sessions) Create(ctx context.Context, opts CreateSessionOptions) (*Sess
 	if opts.Proxy != nil {
 		body["proxy"] = opts.Proxy
 	}
-	if opts.TimeoutSeconds != 0 {
-		body["timeoutSeconds"] = opts.TimeoutSeconds
+	secs, err := sessionTimeoutSeconds(opts.SessionTimeoutMs, opts.TimeoutSeconds)
+	if err != nil {
+		return nil, err
+	}
+	if secs > 0 {
+		body["timeoutSeconds"] = secs
 	}
 	if opts.KeepAlive {
 		body["keepAlive"] = true
@@ -101,6 +105,19 @@ func (s *Sessions) Create(ctx context.Context, opts CreateSessionOptions) (*Sess
 		}
 	}
 	return session, nil
+}
+
+// sessionTimeoutSeconds picks the wire value for the gateway's timeoutSeconds: the
+// millisecond option rounded up to whole seconds, else the deprecated seconds
+// option. Zero means "omit". A negative value is refused before any request.
+func sessionTimeoutSeconds(ms, legacySeconds int) (int, error) {
+	if ms < 0 || legacySeconds < 0 {
+		return 0, newSolariError("Solari: SessionTimeoutMs must not be negative")
+	}
+	if ms > 0 {
+		return (ms + 999) / 1000, nil
+	}
+	return legacySeconds, nil
 }
 
 // Get fetches the gateway's current view of a session (GET /sessions/:id).
