@@ -161,3 +161,44 @@ func TestOrdinary503IsStillRetried(t *testing.T) {
 		t.Errorf("attempts = %d, want >= 2", got)
 	}
 }
+
+// A 502 PoolResponseUnparseable carries retryable:false (the pool may already have created the
+// session): one attempt, and the code reaches the caller.
+func TestPoolResponseUnparseableIsTerminal(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"Pool returned an invalid response","code":"PoolResponseUnparseable","retryable":false}`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL)
+	_, err := c.Sessions.Create(context.Background(), CreateSessionOptions{})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !IsCode(err, "PoolResponseUnparseable") {
+		t.Errorf("code not surfaced: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("attempts = %d, want 1 (retryable:false must not be retried)", got)
+	}
+}
+
+// A bare 502 (no body hint) is still retried.
+func TestBare502IsStillRetried(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL)
+	_, _ = c.Sessions.Create(context.Background(), CreateSessionOptions{})
+	if got := atomic.LoadInt32(&calls); got < 2 {
+		t.Errorf("attempts = %d, want >= 2", got)
+	}
+}
