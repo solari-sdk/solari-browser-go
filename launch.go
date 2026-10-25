@@ -43,7 +43,12 @@ type LaunchOptions struct {
 	// Probe forces the post-connect health probe on or off. nil (the default)
 	// means "probe iff Retries > 0", matching the TS SDK.
 	Probe *bool
-	// ProbeTimeout bounds each health probe. 0 defaults to 2s.
+	// ProbeTimeoutMs bounds each health probe, in milliseconds. 0 defaults to
+	// 2000. Negative is an error.
+	ProbeTimeoutMs int
+	// ProbeTimeout is the same bound as a time.Duration.
+	//
+	// Deprecated: use ProbeTimeoutMs. When both are set ProbeTimeoutMs wins.
 	ProbeTimeout time.Duration
 }
 
@@ -97,9 +102,9 @@ func (s *Sessions) Launch(ctx context.Context, opts LaunchOptions) (*LaunchedSes
 	if opts.Probe != nil {
 		wantProbe = *opts.Probe
 	}
-	probeTimeout := opts.ProbeTimeout
-	if probeTimeout <= 0 {
-		probeTimeout = 2 * time.Second
+	probeTimeout, err := probeTimeoutFor(opts.ProbeTimeoutMs, opts.ProbeTimeout)
+	if err != nil {
+		return nil, err
 	}
 
 	for attempt := 0; ; attempt++ {
@@ -223,4 +228,19 @@ func mapSameSite(s string) network.CookieSameSite {
 	default:
 		return ""
 	}
+}
+
+// probeTimeoutFor resolves the health-probe bound: ProbeTimeoutMs, else the
+// deprecated ProbeTimeout, else 2s. A negative millisecond value is refused.
+func probeTimeoutFor(ms int, legacy time.Duration) (time.Duration, error) {
+	if ms < 0 {
+		return 0, newSolariError("Solari: ProbeTimeoutMs must not be negative")
+	}
+	if ms > 0 {
+		return time.Duration(ms) * time.Millisecond, nil
+	}
+	if legacy > 0 {
+		return legacy, nil
+	}
+	return 2 * time.Second, nil
 }

@@ -201,11 +201,17 @@ type CreateSessionOptions struct {
 	// Proxy requests managed egress. Requires Stealth. Accepts a ProxyPreset
 	// (ProxyCountry("gb"), ProxySmart, ProxyOff) or a ProxyRequest.
 	Proxy ProxySpec
-	// TimeoutSeconds ends the session earlier than the plan maximum. Zero (the
-	// default) leaves the plan maximum; the gateway refuses anything under 60.
+	// SessionTimeoutMs ends the session earlier than the plan maximum, in
+	// milliseconds. Zero (the default) leaves the plan maximum. The gateway
+	// counts whole seconds, so the value is rounded up (1001 ms is 2 s) and it
+	// refuses anything under 60 s. Negative is an error.
+	SessionTimeoutMs int
+	// TimeoutSeconds is the same limit in seconds.
+	//
+	// Deprecated: use SessionTimeoutMs. When both are set SessionTimeoutMs wins.
 	TimeoutSeconds int
 	// KeepAlive holds the session after the client disconnects, until its
-	// deadline (TimeoutSeconds, else an hour, never past the plan maximum) or
+	// deadline (SessionTimeoutMs, else an hour, never past the plan maximum) or
 	// until it is released, so a dropped client can reconnect.
 	KeepAlive bool
 	// UserMetadata is free-form JSON stored with the session and returned by

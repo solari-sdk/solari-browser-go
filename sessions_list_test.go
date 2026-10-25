@@ -23,9 +23,9 @@ func TestCreateSessionTimeoutKeepAliveUserMetadata(t *testing.T) {
 	defer srv.Close()
 
 	s, err := newTestClient(t, srv.URL).Sessions.Create(context.Background(), CreateSessionOptions{
-		TimeoutSeconds: 120,
-		KeepAlive:      true,
-		UserMetadata:   map[string]interface{}{"job": "j-7"},
+		SessionTimeoutMs: 120000,
+		KeepAlive:        true,
+		UserMetadata:     map[string]interface{}{"job": "j-7"},
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
