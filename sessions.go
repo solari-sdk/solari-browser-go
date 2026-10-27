@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -109,13 +110,22 @@ func (s *Sessions) Create(ctx context.Context, opts CreateSessionOptions) (*Sess
 
 // sessionTimeoutSeconds picks the wire value for the gateway's timeoutSeconds: the
 // millisecond option rounded up to whole seconds, else the deprecated seconds
-// option. Zero means "omit". A negative value is refused before any request.
+// option. Zero means "omit". A negative value, or one whose seconds do not fit the
+// wire field (int32), is refused before any request.
 func sessionTimeoutSeconds(ms, legacySeconds int) (int, error) {
 	if ms < 0 || legacySeconds < 0 {
 		return 0, newSolariError("Solari: SessionTimeoutMs must not be negative")
 	}
 	if ms > 0 {
-		return (ms + 999) / 1000, nil
+		// Not (ms+999)/1000: that overflows near the maximum int.
+		secs := ms / 1000
+		if ms%1000 != 0 {
+			secs++
+		}
+		if secs > math.MaxInt32 {
+			return 0, newSolariError("Solari: SessionTimeoutMs is too large")
+		}
+		return secs, nil
 	}
 	return legacySeconds, nil
 }

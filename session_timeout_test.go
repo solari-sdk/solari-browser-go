@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,6 +27,9 @@ func TestSessionTimeoutSeconds(t *testing.T) {
 		{"1 ms rounds up to 1 s (the gateway then refuses under 60)", 1, 0, 1, false},
 		{"legacy seconds only", 0, 90, 90, false},
 		{"both set: SessionTimeoutMs wins", 120000, 90, 120, false},
+		{"largest ms that fits int32 seconds", math.MaxInt32 * 1000, 0, math.MaxInt32, false},
+		{"one ms past int32 seconds", math.MaxInt32*1000 + 1, 0, 0, true},
+		{"max int does not overflow", math.MaxInt, 0, 0, true},
 		{"negative ms", -1, 0, 0, true},
 		{"negative legacy", 0, -5, 0, true},
 	}
