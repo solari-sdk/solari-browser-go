@@ -165,7 +165,7 @@ raw, err := client.Sessions.DownloadReplay(ctx, session.ID) // replay bytes (NDJ
 
 All durations are milliseconds. `SessionTimeoutMs` is rounded up to whole seconds
 for the gateway (1001 ms is 2 s) and the gateway refuses anything under 60 s; a
-negative value is an error and zero leaves the plan maximum. Launch's probe bound is
+negative or too-large value is an error and zero leaves the plan maximum. Launch's probe bound is
 `LaunchOptions.ProbeTimeoutMs`.
 
 **Deprecated:** `CreateSessionOptions.TimeoutSeconds` and `LaunchOptions.ProbeTimeout`
