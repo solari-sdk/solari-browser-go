@@ -324,6 +324,8 @@ type ReplayURL struct {
 type Profile struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Version increases on every save. Zero when the gateway omits it.
+	Version int `json:"version,omitempty"`
 }
 
 // SaveResult is the outcome of Profiles.Save.
