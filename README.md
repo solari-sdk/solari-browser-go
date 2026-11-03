@@ -243,7 +243,7 @@ version, err = ed.WaitForSave(ctx, 10*time.Minute) // poll until someone saves f
 
 An expired or used link fails with a `*SolariError` of status 404, an editor
 that is not running with 409, and a failed save with 502 (the editor stays
-open, so retry). `WaitForSave` fails with status 408 on timeout or link expiry.
+open; save and exit are never retried automatically, so call again). `WaitForSave` fails with status 408 on timeout or link expiry.
 
 Attaching a profile populates the session's storage state. Because Go cannot
 express TypeScript's `undefined` vs `null`, the tri-state is carried by two

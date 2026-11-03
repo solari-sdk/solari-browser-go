@@ -114,8 +114,8 @@ func TestEditorErrorStatuses(t *testing.T) {
 		if !errors.As(err, &serr) || serr.Status != status {
 			t.Errorf("status %d: err = %v", status, err)
 		}
-		if status != 502 && hits != 1 {
-			t.Errorf("status %d: %d attempts, want 1 (not retried)", status, hits)
+		if hits != 1 {
+			t.Errorf("status %d: %d attempts, want 1 (save is never replayed)", status, hits)
 		}
 		srv.Close()
 	}

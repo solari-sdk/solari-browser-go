@@ -102,6 +102,9 @@ type httpRequestOptions struct {
 	// headers are extra request headers sent on every attempt (the profile
 	// editor's X-Handoff-Id).
 	headers map[string]string
+	// noRetry makes the call single-shot: a 502 or a transport error is returned
+	// as-is. Used where replaying the request is not safe (editor save).
+	noRetry bool
 }
 
 // isRetryableStatus reports whether a status warrants another attempt. Only the
@@ -221,7 +224,7 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 			lastErr = newHTTPError(method, path, status, raw)
 		}
 
-		if attempt >= t.maxAttempts {
+		if attempt >= t.maxAttempts || opts.noRetry {
 			return t.exhausted(method, path, lastErr)
 		}
 		if err := t.sleepBackoff(ctx); err != nil {

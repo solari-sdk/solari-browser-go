@@ -102,9 +102,13 @@ func (p *Profiles) Edit(ctx context.Context, id, reason string) (*Editor, error)
 }
 
 func (e *Editor) call(ctx context.Context, method, suffix string, out interface{}) error {
+	return e.callOpts(ctx, method, suffix, out, false)
+}
+
+func (e *Editor) callOpts(ctx context.Context, method, suffix string, out interface{}, noRetry bool) error {
 	path := "/profiles/" + url.PathEscape(e.ProfileID) + "/editor" + suffix
 	return e.profiles.client.http.request(ctx, method, path, nil,
-		httpRequestOptions{headers: map[string]string{"X-Handoff-Id": e.HandoffID}}, out)
+		httpRequestOptions{headers: map[string]string{"X-Handoff-Id": e.HandoffID}, noRetry: noRetry}, out)
 }
 
 // Status reports the editor's state (GET /profiles/:id/editor).
@@ -121,13 +125,14 @@ func (e *Editor) Status(ctx context.Context) (*EditorState, error) {
 }
 
 // SaveAndClose stores the editor's browser state in the profile and closes the
-// editor (POST /profiles/:id/editor/save). It returns the new version. On a
-// 502 the save failed and the editor stays open, so it can be retried.
+// editor (POST /profiles/:id/editor/save). It returns the new version. A 502 means
+// the save failed and the editor stays open; it is not retried automatically, so
+// call SaveAndClose again.
 func (e *Editor) SaveAndClose(ctx context.Context) (int, error) {
 	var out struct {
 		Version int `json:"version"`
 	}
-	if err := e.call(ctx, http.MethodPost, "/save", &out); err != nil {
+	if err := e.callOpts(ctx, http.MethodPost, "/save", &out, true); err != nil {
 		return 0, err
 	}
 	return out.Version, nil
@@ -135,7 +140,7 @@ func (e *Editor) SaveAndClose(ctx context.Context) (int, error) {
 
 // Exit closes the editor without saving (DELETE /profiles/:id/editor).
 func (e *Editor) Exit(ctx context.Context) error {
-	return e.call(ctx, http.MethodDelete, "", nil)
+	return e.callOpts(ctx, http.MethodDelete, "", nil, true)
 }
 
 // WaitForSave polls Profiles.List until the profile's version exceeds
