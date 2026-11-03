@@ -4,8 +4,35 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
 )
+
+var sessionPathRE = regexp.MustCompile(`(/sessions/)([^/?#\s"]+)`)
+
+// redactSessionPath cuts the session id in every `/sessions/<id>` of s to its first 8 characters. The
+// session id is the credential inside the ws/cdp URLs, so it must not appear in error text or logs.
+func redactSessionPath(s string) string {
+	return sessionPathRE.ReplaceAllStringFunc(s, func(m string) string {
+		sub := sessionPathRE.FindStringSubmatch(m)
+		id := sub[2]
+		if r := []rune(id); len(r) > 8 {
+			id = string(r[:8]) + "…"
+		}
+		return sub[1] + id
+	})
+}
+
+// redactErr returns err with the URL of a *url.Error (which net/http fills with the full request URL)
+// redacted, so neither its text nor an unwrapped copy carries the session id.
+func redactErr(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return &url.Error{Op: ue.Op, URL: redactSessionPath(ue.URL), Err: ue.Err}
+	}
+	return err
+}
 
 // Error codes the gateway returns in a `{"code": ...}` error body. They are
 // plain strings (not a closed enum) — the gateway may add more, so compare with
@@ -93,7 +120,7 @@ func newHTTPError(method, path string, status int, raw []byte) *SolariError {
 	if len(body) > maxErrorBodyChars {
 		body = body[:maxErrorBodyChars] + "…"
 	}
-	msg := fmt.Sprintf("Solari %s %s failed: %d", method, path, status)
+	msg := fmt.Sprintf("Solari %s %s failed: %d", method, redactSessionPath(path), status)
 	if body != "" {
 		msg += " " + body
 	}
