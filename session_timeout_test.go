@@ -86,7 +86,7 @@ func TestProbeTimeoutFor(t *testing.T) {
 		{"negative ms", -1, 0, 0, true},
 	}
 	for _, c := range cases {
-		got, err := probeTimeoutFor(c.ms, c.legacy)
+		got, _, err := probeTimeoutFor(c.ms, c.legacy)
 		if (err != nil) != c.wantErr || got != c.want {
 			t.Errorf("%s: got (%v, %v), want (%v, err=%v)", c.name, got, err, c.want, c.wantErr)
 		}
