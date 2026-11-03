@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6.2
+
+- **Errors no longer print the session id.** The session id is the credential inside the ws/cdp URLs, but `Sessions.Get` / `Release` / `ReplayURL` errors, the retry-exhausted message and a wrapped `*url.Error` printed it in full (`Solari GET /sessions/<id> failed`). They now carry the first 8 characters of the id only. A `Launch` health-probe failure no longer prints the CDP URL it dialled (`could not dial "ws://…/cdp/<id>"`) and keeps `errors.Is` working on the cause; a failed replay or storage-state download no longer prints the signed URL; "unexpected session response" no longer dumps the response (it holds the id and the endpoints).
+
 ## v0.6.1
 
 - `Sessions.Launch` with the health probe works: the returned `Browser` context is no longer already cancelled. The probe's first `chromedp.Run` used to run on a child context and cancel it on return, which tore down the browser chromedp had allocated on it.

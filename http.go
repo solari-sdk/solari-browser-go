@@ -186,7 +186,7 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return newSolariError(fmt.Sprintf("Solari %s %s: failed to marshal request body: %v", method, path, err))
+			return newSolariError(fmt.Sprintf("Solari %s %s: failed to marshal request body: %v", method, redactSessionPath(path), err))
 		}
 		bodyBytes = b
 	}
@@ -241,8 +241,8 @@ func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBy
 	req, err := http.NewRequestWithContext(ctx, method, t.baseURL+path, bytesReader(bodyBytes))
 	if err != nil {
 		return 0, nil, &SolariError{
-			Message: fmt.Sprintf("Solari %s %s: %v", method, path, err),
-			Err:     err,
+			Message: fmt.Sprintf("Solari %s %s: %v", method, redactSessionPath(path), redactErr(err)),
+			Err:     redactErr(err),
 		}
 	}
 	req.Header.Set("Authorization", t.authHeader())
@@ -257,16 +257,16 @@ func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBy
 	res, err := t.httpClient.Do(req)
 	if err != nil {
 		return 0, nil, &SolariError{
-			Message: fmt.Sprintf("Solari %s %s: %v", method, path, err),
-			Err:     err,
+			Message: fmt.Sprintf("Solari %s %s: %v", method, redactSessionPath(path), redactErr(err)),
+			Err:     redactErr(err),
 		}
 	}
 	defer res.Body.Close()
 	raw, err := io.ReadAll(res.Body)
 	if err != nil {
 		return 0, nil, &SolariError{
-			Message: fmt.Sprintf("Solari %s %s: reading body failed: %v", method, path, err),
-			Err:     err,
+			Message: fmt.Sprintf("Solari %s %s: reading body failed: %v", method, redactSessionPath(path), redactErr(err)),
+			Err:     redactErr(err),
 		}
 	}
 	return res.StatusCode, raw, nil
@@ -277,7 +277,7 @@ func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBy
 // still branch on them via errors.As.
 func (t *httpTransport) exhausted(method, path string, lastErr error) error {
 	out := &SolariError{
-		Message: fmt.Sprintf("Solari %s %s: exhausted %d attempts", method, path, t.maxAttempts),
+		Message: fmt.Sprintf("Solari %s %s: exhausted %d attempts", method, redactSessionPath(path), t.maxAttempts),
 		Err:     lastErr,
 	}
 	if serr, ok := lastErr.(*SolariError); ok {
@@ -296,7 +296,7 @@ func decodeInto(method, path string, raw []byte, out interface{}) error {
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return &SolariError{
-			Message: fmt.Sprintf("Solari %s %s: decoding response failed: %v", method, path, err),
+			Message: fmt.Sprintf("Solari %s %s: decoding response failed: %v", method, redactSessionPath(path), err),
 			Err:     err,
 		}
 	}

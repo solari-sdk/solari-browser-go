@@ -202,7 +202,8 @@ func probe(browserCtx context.Context, connectTimeout, evalTimeout time.Duration
 
 func probeWith(browserCtx context.Context, connectTimeout, evalTimeout time.Duration, connect, eval func(context.Context) error) error {
 	fail := func(what string, err error) error {
-		return &SolariError{Message: "Solari: browser health probe " + what + ": " + err.Error(), Err: err}
+		scrubbed := scrubErr(err)
+		return &SolariError{Message: "Solari: browser health probe " + what + ": " + scrubbed.Error(), Err: scrubbed}
 	}
 	done := make(chan error, 1)
 	go func() { done <- connect(browserCtx) }()

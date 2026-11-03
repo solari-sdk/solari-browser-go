@@ -4,8 +4,78 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
 )
+
+var sessionPathRE = regexp.MustCompile(`(/sessions/)([^/?#\s"]+)`)
+
+// redactSessionPath cuts the session id in every `/sessions/<id>` of s to its first 8 characters. The
+// session id is the credential inside the ws/cdp URLs, so it must not appear in error text or logs.
+func redactSessionPath(s string) string {
+	return sessionPathRE.ReplaceAllStringFunc(s, func(m string) string {
+		sub := sessionPathRE.FindStringSubmatch(m)
+		id := sub[2]
+		if r := []rune(id); len(r) > 8 {
+			id = string(r[:8]) + "…"
+		}
+		return sub[1] + id
+	})
+}
+
+var urlTokenRE = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s"'<>)\],]+`)
+
+// redactURL is scheme://host[:port]/… of a URL; <url> for anything that does not parse. A CDP endpoint, a
+// signed replay URL and a preview URL carry their credential in the path or query.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "<url>"
+	}
+	return u.Scheme + "://" + u.Host + "/…"
+}
+
+// scrubURLs returns text with each of secrets (a session's ws / cdp endpoints) replaced by its redacted form, then
+// every other URL-looking token cut to scheme://host/…: the libraries print the URL they dialled.
+func scrubURLs(text string, secrets ...string) string {
+	for _, s := range secrets {
+		if s != "" {
+			text = strings.ReplaceAll(text, s, redactURL(s))
+		}
+	}
+	return urlTokenRE.ReplaceAllStringFunc(text, redactURL)
+}
+
+// scrubbedError keeps an error's identity for errors.Is / errors.As-free callers but carries only the scrubbed text:
+// it deliberately does not Unwrap, because the wrapped error's text holds the URL.
+type scrubbedError struct {
+	msg  string
+	orig error
+}
+
+func (e *scrubbedError) Error() string { return e.msg }
+
+// Is lets errors.Is(err, context.DeadlineExceeded) and friends still work without exposing the original text.
+func (e *scrubbedError) Is(target error) bool { return errors.Is(e.orig, target) }
+
+// scrubErr returns err with every URL in its text cut down, or nil for nil.
+func scrubErr(err error, secrets ...string) error {
+	if err == nil {
+		return nil
+	}
+	return &scrubbedError{msg: scrubURLs(err.Error(), secrets...), orig: err}
+}
+
+// redactErr returns err with the URL of a *url.Error (which net/http fills with the full request URL)
+// redacted, so neither its text nor an unwrapped copy carries the session id.
+func redactErr(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return &url.Error{Op: ue.Op, URL: redactSessionPath(ue.URL), Err: ue.Err}
+	}
+	return err
+}
 
 // Error codes the gateway returns in a `{"code": ...}` error body. They are
 // plain strings (not a closed enum) — the gateway may add more, so compare with
@@ -93,7 +163,7 @@ func newHTTPError(method, path string, status int, raw []byte) *SolariError {
 	if len(body) > maxErrorBodyChars {
 		body = body[:maxErrorBodyChars] + "…"
 	}
-	msg := fmt.Sprintf("Solari %s %s failed: %d", method, path, status)
+	msg := fmt.Sprintf("Solari %s %s failed: %d", method, redactSessionPath(path), status)
 	if body != "" {
 		msg += " " + body
 	}
