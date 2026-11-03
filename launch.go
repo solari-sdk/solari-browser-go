@@ -23,6 +23,7 @@ package solari
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
@@ -43,8 +44,9 @@ type LaunchOptions struct {
 	// Probe forces the post-connect health probe on or off. nil (the default)
 	// means "probe iff Retries > 0", matching the TS SDK.
 	Probe *bool
-	// ProbeTimeoutMs bounds each health probe, in milliseconds. 0 defaults to
-	// 2000. Negative is an error.
+	// ProbeTimeoutMs bounds each step of the health probe (connecting, then
+	// evaluating), in milliseconds. 0 defaults to 2000 for the evaluate and 15000
+	// for the connect. Negative is an error.
 	ProbeTimeoutMs int
 	// ProbeTimeout is the same bound as a time.Duration.
 	//
@@ -102,9 +104,14 @@ func (s *Sessions) Launch(ctx context.Context, opts LaunchOptions) (*LaunchedSes
 	if opts.Probe != nil {
 		wantProbe = *opts.Probe
 	}
-	probeTimeout, err := probeTimeoutFor(opts.ProbeTimeoutMs, opts.ProbeTimeout)
+	probeTimeout, explicit, err := probeTimeoutFor(opts.ProbeTimeoutMs, opts.ProbeTimeout)
 	if err != nil {
 		return nil, err
+	}
+
+	connectTimeout := defaultConnectTimeout
+	if explicit {
+		connectTimeout = probeTimeout
 	}
 
 	for attempt := 0; ; attempt++ {
@@ -131,7 +138,7 @@ func (s *Sessions) Launch(ctx context.Context, opts LaunchOptions) (*LaunchedSes
 		}
 
 		if wantProbe {
-			if err := probe(browserCtx, probeTimeout); err != nil {
+			if err := probe(browserCtx, connectTimeout, probeTimeout); err != nil {
 				cancel()
 				_ = s.Release(context.Background(), session.ID)
 				if attempt < opts.Retries {
@@ -171,15 +178,49 @@ func isTransient(err error) bool {
 	return true
 }
 
+// defaultConnectTimeout bounds the connect step of the probe when ProbeTimeoutMs is not set: the first chromedp.Run
+// dials the gateway, upgrades to a websocket and opens a target, which on a cold link takes well over the 2 s the
+// evaluate step is given.
+const defaultConnectTimeout = 15 * time.Second
+
 // probe opens the connection (chromedp is lazy until the first Run), evaluates
 // `1`, and confirms the browser answers within the timeout. A failure means the
 // slot is unhealthy — the caller retries.
-func probe(browserCtx context.Context, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(browserCtx, timeout)
+//
+// The connect step runs on browserCtx ITSELF, never on a child context:
+// chromedp ties the browser it allocates on the first Run to that Run's context,
+// so a child (WithTimeout) context that is then cancelled would tear the browser
+// down and hand the caller a dead context. Only the evaluate runs on a child.
+func probe(browserCtx context.Context, connectTimeout, evalTimeout time.Duration) error {
+	return probeWith(browserCtx, connectTimeout, evalTimeout,
+		func(ctx context.Context) error { return chromedp.Run(ctx) },
+		func(ctx context.Context) error {
+			var n int
+			return chromedp.Run(ctx, chromedp.Evaluate(`1`, &n))
+		})
+}
+
+func probeWith(browserCtx context.Context, connectTimeout, evalTimeout time.Duration, connect, eval func(context.Context) error) error {
+	fail := func(what string, err error) error {
+		return &SolariError{Message: "Solari: browser health probe " + what + ": " + err.Error(), Err: err}
+	}
+	done := make(chan error, 1)
+	go func() { done <- connect(browserCtx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fail("failed", err)
+		}
+	case <-time.After(connectTimeout):
+		// The caller cancels browserCtx next, which also ends the connect goroutine.
+		return fail("failed", fmt.Errorf("connecting took longer than %s", connectTimeout))
+	case <-browserCtx.Done():
+		return fail("failed", browserCtx.Err())
+	}
+	ctx, cancel := context.WithTimeout(browserCtx, evalTimeout)
 	defer cancel()
-	var n int
-	if err := chromedp.Run(ctx, chromedp.Evaluate(`1`, &n)); err != nil {
-		return &SolariError{Message: "Solari: browser health probe failed: " + err.Error(), Err: err}
+	if err := eval(ctx); err != nil {
+		return fail("failed", err)
 	}
 	return nil
 }
@@ -232,15 +273,16 @@ func mapSameSite(s string) network.CookieSameSite {
 
 // probeTimeoutFor resolves the health-probe bound: ProbeTimeoutMs, else the
 // deprecated ProbeTimeout, else 2s. A negative millisecond value is refused.
-func probeTimeoutFor(ms int, legacy time.Duration) (time.Duration, error) {
+// The bool reports whether the caller chose the value, in which case it bounds the connect step too.
+func probeTimeoutFor(ms int, legacy time.Duration) (time.Duration, bool, error) {
 	if ms < 0 {
-		return 0, newSolariError("Solari: ProbeTimeoutMs must not be negative")
+		return 0, false, newSolariError("Solari: ProbeTimeoutMs must not be negative")
 	}
 	if ms > 0 {
-		return time.Duration(ms) * time.Millisecond, nil
+		return time.Duration(ms) * time.Millisecond, true, nil
 	}
 	if legacy > 0 {
-		return legacy, nil
+		return legacy, true, nil
 	}
-	return 2 * time.Second, nil
+	return 2 * time.Second, false, nil
 }
