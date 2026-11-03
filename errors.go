@@ -24,6 +24,49 @@ func redactSessionPath(s string) string {
 	})
 }
 
+var urlTokenRE = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s"'<>)\],]+`)
+
+// redactURL is scheme://host[:port]/… of a URL; <url> for anything that does not parse. A CDP endpoint, a
+// signed replay URL and a preview URL carry their credential in the path or query.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "<url>"
+	}
+	return u.Scheme + "://" + u.Host + "/…"
+}
+
+// scrubURLs returns text with each of secrets (a session's ws / cdp endpoints) replaced by its redacted form, then
+// every other URL-looking token cut to scheme://host/…: the libraries print the URL they dialled.
+func scrubURLs(text string, secrets ...string) string {
+	for _, s := range secrets {
+		if s != "" {
+			text = strings.ReplaceAll(text, s, redactURL(s))
+		}
+	}
+	return urlTokenRE.ReplaceAllStringFunc(text, redactURL)
+}
+
+// scrubbedError keeps an error's identity for errors.Is / errors.As-free callers but carries only the scrubbed text:
+// it deliberately does not Unwrap, because the wrapped error's text holds the URL.
+type scrubbedError struct {
+	msg  string
+	orig error
+}
+
+func (e *scrubbedError) Error() string { return e.msg }
+
+// Is lets errors.Is(err, context.DeadlineExceeded) and friends still work without exposing the original text.
+func (e *scrubbedError) Is(target error) bool { return errors.Is(e.orig, target) }
+
+// scrubErr returns err with every URL in its text cut down, or nil for nil.
+func scrubErr(err error, secrets ...string) error {
+	if err == nil {
+		return nil
+	}
+	return &scrubbedError{msg: scrubURLs(err.Error(), secrets...), orig: err}
+}
+
 // redactErr returns err with the URL of a *url.Error (which net/http fills with the full request URL)
 // redacted, so neither its text nor an unwrapped copy carries the session id.
 func redactErr(err error) error {

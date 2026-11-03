@@ -3,10 +3,12 @@ package solari
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The session id is the credential inside the ws/cdp URLs, so errors must not carry it.
@@ -59,6 +61,68 @@ func TestTransportErrorDoesNotPrintTheSessionID(t *testing.T) {
 	for e := error(err); e != nil; e = errors.Unwrap(e) {
 		if strings.Contains(e.Error(), "IDSECRET") {
 			t.Fatalf("error (or a wrapped error) carries the session id: %v", e)
+		}
+	}
+}
+
+func TestProbeFailureDoesNotPrintTheCDPEndpoint(t *testing.T) {
+	const dial = `could not dial "ws://127.0.0.1:1/cdp/CDPSECRET": dial tcp 127.0.0.1:1: connect: connection refused`
+	err := probeWith(context.Background(), time.Second, time.Second,
+		func(context.Context) error { return errors.New(dial) },
+		func(context.Context) error { return nil })
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for e := error(err); e != nil; e = errors.Unwrap(e) {
+		if strings.Contains(e.Error(), "CDPSECRET") {
+			t.Fatalf("probe error (or a wrapped error) carries the endpoint: %v", e)
+		}
+	}
+	if !strings.Contains(err.Error(), "127.0.0.1:1") {
+		t.Fatalf("the host should survive: %v", err)
+	}
+}
+
+func TestProbeFailureKeepsErrorsIs(t *testing.T) {
+	err := probeWith(context.Background(), time.Second, time.Second,
+		func(context.Context) error {
+			return fmt.Errorf(`could not dial "ws://h/cdp/S": %w`, context.DeadlineExceeded)
+		},
+		func(context.Context) error { return nil })
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("errors.Is must still see the cause: %v", err)
+	}
+}
+
+func TestUnexpectedSessionResponseDoesNotPrintValues(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"wsEndpoint":"wss://gw/ws/VALUESECRET"}`))
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv.URL)
+	_, err := c.Sessions.Create(context.Background(), CreateSessionOptions{})
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if strings.Contains(err.Error(), "VALUESECRET") {
+		t.Fatalf("error carries a response value: %v", err)
+	}
+}
+
+func TestFailedPresignedFetchDoesNotPrintTheSignedURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	u := srv.URL + "/state.json?X-Amz-Signature=SIGSECRET"
+	srv.Close()
+	c := newTestClient(t, srv.URL)
+	_, err := c.Sessions.getPresigned(context.Background(), u, time.Second, "storageState")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	for e := error(err); e != nil; e = errors.Unwrap(e) {
+		if strings.Contains(e.Error(), "SIGSECRET") {
+			t.Fatalf("error (or a wrapped error) carries the signed URL: %v", e)
 		}
 	}
 }

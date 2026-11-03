@@ -70,7 +70,7 @@ func (s *Sessions) Create(ctx context.Context, opts CreateSessionOptions) (*Sess
 		return nil, err
 	}
 	if data.SessionID == "" || data.WSEndpoint == "" {
-		return nil, newSolariError("Solari: unexpected session response: " + describe(data))
+		return nil, newSolariError("Solari: unexpected session response (the id or the websocket endpoint is missing)")
 	}
 
 	cdp := data.CDPEndpoint
@@ -239,7 +239,7 @@ func (s *Sessions) ReplayURL(ctx context.Context, id string) (*ReplayURL, error)
 		return nil, err
 	}
 	if res.URL == "" {
-		return nil, newSolariError("Solari: unexpected replay-url response: " + describe(res))
+		return nil, newSolariError("Solari: unexpected replay-url response (the url is missing)")
 	}
 	return &res, nil
 }
@@ -292,23 +292,23 @@ func (s *Sessions) getPresigned(ctx context.Context, rawURL string, timeout time
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, &SolariError{
-			Message: fmt.Sprintf("Solari: failed to fetch %s: %v", what, err),
-			Err:     err,
+			Message: fmt.Sprintf("Solari: failed to fetch %s: %v", what, scrubErr(err, rawURL)),
+			Err:     scrubErr(err, rawURL),
 		}
 	}
 	res, err := s.client.http.httpClient.Do(req)
 	if err != nil {
 		return nil, &SolariError{
-			Message: fmt.Sprintf("Solari: failed to fetch %s: %v", what, err),
-			Err:     err,
+			Message: fmt.Sprintf("Solari: failed to fetch %s: %v", what, scrubErr(err, rawURL)),
+			Err:     scrubErr(err, rawURL),
 		}
 	}
 	defer res.Body.Close()
 	raw, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, &SolariError{
-			Message: fmt.Sprintf("Solari: failed to read %s: %v", what, err),
-			Err:     err,
+			Message: fmt.Sprintf("Solari: failed to read %s: %v", what, scrubErr(err, rawURL)),
+			Err:     scrubErr(err, rawURL),
 		}
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
@@ -336,13 +336,4 @@ func deriveCdpFromWs(wsEndpoint string) string {
 	}
 	u.Path = "/cdp/" + strings.TrimPrefix(u.Path, "/ws/")
 	return u.String()
-}
-
-// describe renders a value as JSON for an error message, falling back to Go
-// syntax when it will not marshal.
-func describe(v interface{}) string {
-	if b, err := json.Marshal(v); err == nil {
-		return string(b)
-	}
-	return fmt.Sprintf("%+v", v)
 }
