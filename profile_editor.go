@@ -113,6 +113,10 @@ func (e *Editor) Status(ctx context.Context) (*EditorState, error) {
 	if err := e.call(ctx, http.MethodGet, "", &out); err != nil {
 		return nil, err
 	}
+	// The gateway reports null before the editor page has been opened.
+	if out.EditorStatus == "" {
+		out.EditorStatus = EditorIdle
+	}
 	return &out, nil
 }
 

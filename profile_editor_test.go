@@ -88,6 +88,17 @@ func TestEditorStatusSaveExit(t *testing.T) {
 	}
 }
 
+func TestEditorStatusNullIsIdle(t *testing.T) {
+	srv := editorGateway(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"prof_1","editorStatus":null,"editorTaskArn":null,"version":3}`))
+	})
+	defer srv.Close()
+	st, err := openEditor(t, srv).Status(context.Background())
+	if err != nil || st.EditorStatus != EditorIdle || st.Version != 3 {
+		t.Fatalf("status = %+v, %v", st, err)
+	}
+}
+
 func TestEditorErrorStatuses(t *testing.T) {
 	for _, status := range []int{404, 409, 502} {
 		status := status
