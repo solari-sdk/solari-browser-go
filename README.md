@@ -225,6 +225,26 @@ res, err := client.Profiles.Save(ctx, prof.ID, state) // → res.Version, res.Si
 err = client.Profiles.Delete(ctx, prof.ID)            // idempotent
 ```
 
+### Editing a profile
+
+`Profiles.Edit` opens the profile editor on an existing profile and returns an
+`*Editor`. Send the person to `ed.URL`; it is valid for about 30 minutes
+(`ed.ExpiresAt`). There is no auto-save and no save without closing.
+
+```go
+ed, err := client.Profiles.Edit(ctx, prof.ID, "refresh login") // reason is optional ("")
+fmt.Println(ed.URL, ed.ExpiresAt)
+
+st, err := ed.Status(ctx)                    // st.EditorStatus: idle|launching|editing|saving|error
+version, err := ed.SaveAndClose(ctx)         // store the state and close the editor
+err = ed.Exit(ctx)                           // close without saving
+version, err = ed.WaitForSave(ctx, 10*time.Minute) // poll until someone saves from the page
+```
+
+An expired or used link fails with a `*SolariError` of status 404, an editor
+that is not running with 409, and a failed save with 502 (the editor stays
+open, so retry). `WaitForSave` fails with status 408 on timeout or link expiry.
+
 Attaching a profile populates the session's storage state. Because Go cannot
 express TypeScript's `undefined` vs `null`, the tri-state is carried by two
 fields:

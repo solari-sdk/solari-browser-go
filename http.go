@@ -99,6 +99,9 @@ type httpRequestOptions struct {
 	// idempotent DELETEs (profiles) leave it empty, where a 404 really does mean
 	// "already gone".
 	rejectNotFoundCode string
+	// headers are extra request headers sent on every attempt (the profile
+	// editor's X-Handoff-Id).
+	headers map[string]string
 }
 
 // isRetryableStatus reports whether a status warrants another attempt. Only the
@@ -187,7 +190,7 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 
 	var lastErr error
 	for attempt := 1; ; attempt++ {
-		status, raw, err := t.attempt(ctx, method, path, bodyBytes, opts.idempotencyKey)
+		status, raw, err := t.attempt(ctx, method, path, bodyBytes, opts.idempotencyKey, opts.headers)
 		switch {
 		case err != nil:
 			// Transport/network failure — always retryable.
@@ -228,7 +231,7 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 }
 
 // attempt performs one round-trip and fully reads the body.
-func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBytes []byte, idempotencyKey string) (int, []byte, error) {
+func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBytes []byte, idempotencyKey string, headers map[string]string) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, method, t.baseURL+path, bytesReader(bodyBytes))
 	if err != nil {
 		return 0, nil, &SolariError{
@@ -240,6 +243,9 @@ func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBy
 	req.Header.Set("Content-Type", "application/json")
 	if idempotencyKey != "" {
 		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	res, err := t.httpClient.Do(req)
