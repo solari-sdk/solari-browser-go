@@ -126,8 +126,8 @@ func (e *Editor) Status(ctx context.Context) (*EditorState, error) {
 
 // SaveAndClose stores the editor's browser state in the profile and closes the
 // editor (POST /profiles/:id/editor/save). It returns the new version. A 502 means
-// the save failed and the editor stays open; it is not retried automatically, so
-// call SaveAndClose again.
+// the save failed and the editor went to error: it is not retried automatically;
+// call Exit and start a new Edit (a second save gets 409).
 func (e *Editor) SaveAndClose(ctx context.Context) (int, error) {
 	var out struct {
 		Version int `json:"version"`

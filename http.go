@@ -224,7 +224,10 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 			lastErr = newHTTPError(method, path, status, raw)
 		}
 
-		if attempt >= t.maxAttempts || opts.noRetry {
+		if opts.noRetry {
+			return lastErr
+		}
+		if attempt >= t.maxAttempts {
 			return t.exhausted(method, path, lastErr)
 		}
 		if err := t.sleepBackoff(ctx); err != nil {
