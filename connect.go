@@ -8,6 +8,7 @@ package solari
 
 import (
 	"context"
+	"errors"
 
 	"github.com/chromedp/chromedp"
 )
@@ -83,7 +84,13 @@ func (a *scrubbingAllocator) Allocate(ctx context.Context, opts ...chromedp.Brow
 	b, err := a.inner.Allocate(ctx, opts...)
 	if err != nil {
 		scrubbed := scrubErr(err, a.endpoint)
-		return nil, &SolariError{Message: "Solari: could not connect to the browser: " + scrubbed.Error(), Err: scrubbed}
+		var cause error = scrubbed
+		// chromedp dials on its own context, so when the caller's deadline fires its error says "context canceled". Keep the
+		// caller's real reason (DeadlineExceeded / Canceled) findable with errors.Is.
+		if cerr := ctx.Err(); cerr != nil && !errors.Is(scrubbed, cerr) {
+			cause = errors.Join(scrubbed, cerr)
+		}
+		return nil, &SolariError{Message: "Solari: could not connect to the browser: " + scrubbed.Error(), Err: cause}
 	}
 	return b, nil
 }
