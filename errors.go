@@ -156,10 +156,44 @@ func parseErrorCode(raw []byte) string {
 	return parsed.Code
 }
 
+var (
+	sessionIDFldRE = regexp.MustCompile(`("sessionId"\s*:\s*")([^"]+)(")`)
+)
+
+func shortID(id string) string {
+	if r := []rune(id); len(r) > 8 {
+		return string(r[:8]) + "…"
+	}
+	return id
+}
+
+// redactBody cuts the session id of path (`/sessions/<id>/…`), in any spelling, and every `"sessionId":"…"` field of a response
+// body to its first 8 characters. The id is the credential inside the ws/cdp URLs and the gateway's error bodies used to echo
+// it (replay-url 404), so it must not reach an error message through the body either.
+func redactBody(path, body string) string {
+	for _, m := range sessionPathRE.FindAllStringSubmatch(path, -1) {
+		raw := m[2]
+		if len([]rune(raw)) <= 8 {
+			continue
+		}
+		plain, err := url.PathUnescape(raw)
+		if err != nil {
+			plain = raw
+		}
+		for _, form := range []string{raw, url.PathEscape(plain), url.QueryEscape(plain), plain} {
+			body = strings.ReplaceAll(body, form, shortID(plain))
+		}
+	}
+	return sessionIDFldRE.ReplaceAllStringFunc(body, func(f string) string {
+		sub := sessionIDFldRE.FindStringSubmatch(f)
+		return sub[1] + shortID(sub[2]) + sub[3]
+	})
+}
+
 // newHTTPError builds the error for a non-2xx gateway response, mirroring the
 // reference TypeScript SDK's message shape.
 func newHTTPError(method, path string, status int, raw []byte) *SolariError {
-	body := strings.TrimSpace(string(raw))
+	body := redactBody(path, strings.TrimSpace(string(raw)))
 	if len(body) > maxErrorBodyChars {
 		body = body[:maxErrorBodyChars] + "…"
 	}
