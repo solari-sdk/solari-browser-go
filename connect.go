@@ -22,6 +22,9 @@ import (
 // context deadline to every chromedp.Run, or health-probe the browser (Launch does).
 const DefaultDialTimeout = 30 * time.Second
 
+// defaultDialTimeout is what ConnectCDP (and so Connect) uses; a variable only so a test can lower it.
+var defaultDialTimeout = DefaultDialTimeout
+
 // Connect attaches chromedp to a session's remote browser over raw CDP.
 //
 // The returned context is a chromedp browser context: pass it to chromedp.Run.
@@ -63,7 +66,7 @@ func Connect(ctx context.Context, session *Session, opts ...chromedp.ContextOpti
 // ConnectCDP is Connect for a bare CDP endpoint — for callers that persisted an
 // endpoint rather than the Session value.
 func ConnectCDP(ctx context.Context, cdpEndpoint string, opts ...chromedp.ContextOption) (context.Context, context.CancelFunc, error) {
-	return ConnectCDPTimeout(ctx, cdpEndpoint, DefaultDialTimeout, opts...)
+	return ConnectCDPTimeout(ctx, cdpEndpoint, defaultDialTimeout, opts...)
 }
 
 // ConnectCDPTimeout is ConnectCDP with an explicit bound on the WebSocket handshake (DefaultDialTimeout for ConnectCDP). A
