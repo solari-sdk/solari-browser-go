@@ -106,6 +106,14 @@ func main() {
 does **not** release the session, which keeps running until `Sessions.Release`
 or its `ExpiresAt` deadline.
 
+**Always give every `chromedp.Run` a deadline.** The WebSocket handshake is bounded
+(`DefaultDialTimeout`, 30 s; `ConnectCDPTimeout` sets another): a gateway that never
+answers the upgrade fails the first `Run` with a clear error instead of waiting for
+ever. Nothing bounds a connection that is up and then goes silent: a `chromedp.Run`
+under a context with no deadline waits as long as the context lives (a navigation the
+browser never completes, for example). Use `context.WithTimeout` per call, or let
+`Sessions.Launch` health-probe the browser for you.
+
 ### One-call `Launch`
 
 Create + connect + seed + probe + retry + release, in one call:

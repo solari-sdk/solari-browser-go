@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6.4
+
+- **`Connect` / `ConnectCDP`: a WebSocket handshake with no answer now fails at a bound instead of waiting for ever (hardening).** chromedp has no dial timeout, so when the gateway accepted the connection but never completed the upgrade, the first `chromedp.Run` waited for the caller's context, which is for ever when it has no deadline. The handshake is now bounded by `DefaultDialTimeout` (30 s); the error says "no WebSocket handshake answer within 30s" and satisfies `errors.Is(err, context.DeadlineExceeded)`. `ConnectCDPTimeout(ctx, endpoint, d)` sets another bound (`d <= 0` means none). The bound covers only the handshake: pass a deadline to every `chromedp.Run` (README).
+
 ## v0.6.3
 
 - **The gateway's error body no longer carries the session id into error messages.** `GET /sessions/<id>/replay-url` answered `404 ReplayPending` with the full `sessionId` in its body and the error message appended that body. The id is the credential inside the ws/cdp URLs. The body is now redacted (the id of the request path, in any spelling, and every `"sessionId"` field cut to 8 characters); `Code` is still parsed from the raw body.
