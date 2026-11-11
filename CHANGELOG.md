@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6.5
+
+- **`Connect` / `ConnectCDP`: the first `chromedp.Run` no longer waits for ever on a browser that has no page.** chromedp's first `Run` asks the browser to announce its targets and then waits, with no bound, for a page to appear; it is written for a browser it launched itself, which always has one. A pooled Solari browser does not always: on staging, about 4 fresh sessions in 6 on the fast pool answered with no page, so `chromedp.Run(ctx, chromedp.Navigate(...))` never returned (the gateway and the pool host showed an open connection with no traffic, the stall seen in the 2026-11-11 release-gate runs). The SDK now asks for the browser's targets right after the connection is up and opens an `about:blank` page when there is none; a browser that already has a page is left alone. A failure of those two calls changes nothing (chromedp then behaves as before). Staging check: 6 of 6 sessions navigate in 125-430 ms, against 2 of 6 before.
+
 ## v0.6.4
 
 - **`Connect` / `ConnectCDP`: a WebSocket handshake with no answer now fails at a bound instead of waiting for ever (hardening).** chromedp has no dial timeout, so when the gateway accepted the connection but never completed the upgrade, the first `chromedp.Run` waited for the caller's context, which is for ever when it has no deadline. The handshake is now bounded by `DefaultDialTimeout` (30 s); the error says "no WebSocket handshake answer within 30s" and satisfies `errors.Is(err, context.DeadlineExceeded)`. `ConnectCDPTimeout(ctx, endpoint, d)` sets another bound (`d <= 0` means none). The bound covers only the handshake: pass a deadline to every `chromedp.Run` (README).
