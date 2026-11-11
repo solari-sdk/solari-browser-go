@@ -235,3 +235,21 @@ func TestStorageStateZeroValueMarshals(t *testing.T) {
 		t.Errorf("marshal = %s, want {}", out)
 	}
 }
+
+// Retest 2026-11-11 (D-25): the gateway returns sizeBytes as a JSON number; the Profile type did not declare it, so List dropped it.
+func TestProfilesListKeepsSizeBytes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"prof_1","name":"shopper","version":3,"sizeBytes":12345},{"id":"prof_2","name":"fresh"}]`))
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL)
+	profiles, err := c.Profiles.List(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(profiles) != 2 || profiles[0].SizeBytes != 12345 || profiles[0].Version != 3 || profiles[1].SizeBytes != 0 {
+		t.Errorf("profiles = %+v, want sizeBytes 12345 on the first and 0 on the unsaved one", profiles)
+	}
+}
