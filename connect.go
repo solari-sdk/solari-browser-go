@@ -9,9 +9,18 @@ package solari
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync/atomic"
+	"time"
 
 	"github.com/chromedp/chromedp"
 )
+
+// DefaultDialTimeout bounds the WebSocket handshake of Connect / ConnectCDP: the time from dialling the CDP endpoint to the gateway
+// answering the upgrade. chromedp has no dial timeout of its own, so a handshake that gets no answer used to wait for the
+// caller's context for ever (a run with no deadline never returned). It does not bound anything after the connection is up: pass a
+// context deadline to every chromedp.Run, or health-probe the browser (Launch does).
+const DefaultDialTimeout = 30 * time.Second
 
 // Connect attaches chromedp to a session's remote browser over raw CDP.
 //
@@ -54,6 +63,13 @@ func Connect(ctx context.Context, session *Session, opts ...chromedp.ContextOpti
 // ConnectCDP is Connect for a bare CDP endpoint — for callers that persisted an
 // endpoint rather than the Session value.
 func ConnectCDP(ctx context.Context, cdpEndpoint string, opts ...chromedp.ContextOption) (context.Context, context.CancelFunc, error) {
+	return ConnectCDPTimeout(ctx, cdpEndpoint, DefaultDialTimeout, opts...)
+}
+
+// ConnectCDPTimeout is ConnectCDP with an explicit bound on the WebSocket handshake (DefaultDialTimeout for ConnectCDP). A
+// handshake with no answer inside dialTimeout fails the first chromedp.Run with a SolariError that says so. dialTimeout <= 0 means
+// no bound of its own (the caller's context still applies).
+func ConnectCDPTimeout(ctx context.Context, cdpEndpoint string, dialTimeout time.Duration, opts ...chromedp.ContextOption) (context.Context, context.CancelFunc, error) {
 	if cdpEndpoint == "" {
 		return nil, nil, newSolariError("Solari: ConnectCDP requires a cdpEndpoint")
 	}
@@ -63,7 +79,7 @@ func ConnectCDP(ctx context.Context, cdpEndpoint string, opts ...chromedp.Contex
 	// chromedp's dial error quotes the endpoint (`could not dial "wss://…/cdp/<session id>"`), and the session id is the
 	// credential; scrub every error the allocator returns before it reaches the caller's chromedp.Run.
 	if c := chromedp.FromContext(allocCtx); c != nil {
-		c.Allocator = &scrubbingAllocator{inner: c.Allocator, endpoint: cdpEndpoint}
+		c.Allocator = &scrubbingAllocator{inner: c.Allocator, endpoint: cdpEndpoint, dialTimeout: dialTimeout}
 	}
 	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx, opts...)
 	cancel := func() {
@@ -76,13 +92,35 @@ func ConnectCDP(ctx context.Context, cdpEndpoint string, opts ...chromedp.Contex
 // scrubbingAllocator wraps chromedp's remote allocator so the error of a failed connect carries scheme://host/… instead of
 // the dialled URL. The error keeps errors.Is for context.Canceled / context.DeadlineExceeded (scrubbedError.Is).
 type scrubbingAllocator struct {
-	inner    chromedp.Allocator
-	endpoint string
+	inner       chromedp.Allocator
+	endpoint    string
+	dialTimeout time.Duration
 }
 
 func (a *scrubbingAllocator) Allocate(ctx context.Context, opts ...chromedp.BrowserOption) (*chromedp.Browser, error) {
-	b, err := a.inner.Allocate(ctx, opts...)
+	// chromedp dials on the context it is given and keeps the connection on it, so the bound is a timer that cancels that context
+	// while the handshake is pending and is disarmed once the browser is up (a cancel func the browser outlives).
+	dctx, dcancel := context.WithCancel(ctx)
+	var timedOut atomic.Bool
+	var timer *time.Timer
+	if a.dialTimeout > 0 {
+		timer = time.AfterFunc(a.dialTimeout, func() { timedOut.Store(true); dcancel() })
+	}
+	// The browser lives on dctx; release it when the caller's context ends (a failed dial releases it below).
+	go func() { <-dctx.Done(); dcancel() }()
+	b, err := a.inner.Allocate(dctx, opts...)
+	if timer != nil && !timer.Stop() && timedOut.Load() {
+		// The bound fired as the handshake finished: the connection is already cancelled.
+		b, err = nil, context.DeadlineExceeded
+	}
+	if err != nil && timedOut.Load() {
+		return nil, &SolariError{
+			Message: fmt.Sprintf("Solari: could not connect to the browser: no WebSocket handshake answer within %s (the gateway accepted the connection but did not complete the upgrade); retry, or raise the bound with ConnectCDPTimeout", a.dialTimeout),
+			Err:     fmt.Errorf("handshake timeout: %w", context.DeadlineExceeded),
+		}
+	}
 	if err != nil {
+		dcancel()
 		scrubbed := scrubErr(err, a.endpoint)
 		var cause error = scrubbed
 		// chromedp dials on its own context, so when the caller's deadline fires its error says "context canceled". Keep the
