@@ -326,6 +326,8 @@ type Profile struct {
 	Name string `json:"name"`
 	// Version increases on every save. Zero when the gateway omits it.
 	Version int `json:"version,omitempty"`
+	// SizeBytes is the size of the saved storage state in bytes. Zero when the gateway omits it (a profile that has not been saved yet).
+	SizeBytes int `json:"sizeBytes,omitempty"`
 }
 
 // SaveResult is the outcome of Profiles.Save.

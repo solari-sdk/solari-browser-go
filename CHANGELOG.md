@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6.6
+
+- **`Profile` has `SizeBytes`.** The gateway returns each profile's `sizeBytes` as a JSON number; `Profiles.List` dropped it because the type did not declare it. Zero when the gateway omits it (a profile that has not been saved yet).
+
 ## v0.6.5
 
 - **`Connect` / `ConnectCDP`: the first `chromedp.Run` no longer waits for ever on a browser that has no page.** chromedp's first `Run` asks the browser to announce its targets and then waits, with no bound, for a page to appear; it is written for a browser it launched itself, which always has one. A pooled Solari browser does not always: on staging, about 4 fresh sessions in 6 on the fast pool answered with no page, so `chromedp.Run(ctx, chromedp.Navigate(...))` never returned (the gateway and the pool host showed an open connection with no traffic, the stall seen in the 2026-11-11 release-gate runs). The SDK now asks for the browser's targets right after the connection is up and opens an `about:blank` page when there is none; a browser that already has a page is left alone. A failure of those two calls changes nothing (chromedp then behaves as before). Staging check: 6 of 6 sessions navigate in 125-430 ms, against 2 of 6 before.
