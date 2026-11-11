@@ -8,6 +8,7 @@ package solari
 
 import (
 	"context"
+	"errors"
 
 	"github.com/chromedp/chromedp"
 )
@@ -59,6 +60,11 @@ func ConnectCDP(ctx context.Context, cdpEndpoint string, opts ...chromedp.Contex
 	// NoModifyURL: the endpoint is already a complete browser websocket URL, so
 	// chromedp must not probe it for /json/version.
 	allocCtx, cancelAlloc := chromedp.NewRemoteAllocator(ctx, cdpEndpoint, chromedp.NoModifyURL)
+	// chromedp's dial error quotes the endpoint (`could not dial "wss://…/cdp/<session id>"`), and the session id is the
+	// credential; scrub every error the allocator returns before it reaches the caller's chromedp.Run.
+	if c := chromedp.FromContext(allocCtx); c != nil {
+		c.Allocator = &scrubbingAllocator{inner: c.Allocator, endpoint: cdpEndpoint}
+	}
 	browserCtx, cancelBrowser := chromedp.NewContext(allocCtx, opts...)
 	cancel := func() {
 		cancelBrowser()
@@ -66,3 +72,27 @@ func ConnectCDP(ctx context.Context, cdpEndpoint string, opts ...chromedp.Contex
 	}
 	return browserCtx, cancel, nil
 }
+
+// scrubbingAllocator wraps chromedp's remote allocator so the error of a failed connect carries scheme://host/… instead of
+// the dialled URL. The error keeps errors.Is for context.Canceled / context.DeadlineExceeded (scrubbedError.Is).
+type scrubbingAllocator struct {
+	inner    chromedp.Allocator
+	endpoint string
+}
+
+func (a *scrubbingAllocator) Allocate(ctx context.Context, opts ...chromedp.BrowserOption) (*chromedp.Browser, error) {
+	b, err := a.inner.Allocate(ctx, opts...)
+	if err != nil {
+		scrubbed := scrubErr(err, a.endpoint)
+		var cause error = scrubbed
+		// chromedp dials on its own context, so when the caller's deadline fires its error says "context canceled". Keep the
+		// caller's real reason (DeadlineExceeded / Canceled) findable with errors.Is.
+		if cerr := ctx.Err(); cerr != nil && !errors.Is(scrubbed, cerr) {
+			cause = errors.Join(scrubbed, cerr)
+		}
+		return nil, &SolariError{Message: "Solari: could not connect to the browser: " + scrubbed.Error(), Err: cause}
+	}
+	return b, nil
+}
+
+func (a *scrubbingAllocator) Wait() { a.inner.Wait() }

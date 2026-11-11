@@ -126,3 +126,47 @@ func TestFailedPresignedFetchDoesNotPrintTheSignedURL(t *testing.T) {
 		}
 	}
 }
+
+// The gateway's replay-url 404 used to echo the session id in its body, and the error message appends the body.
+func TestErrorBodyThatEchoesTheSessionIDIsCut(t *testing.T) {
+	bodies := map[string]string{
+		"sessionId field": `{"error":"Replay not ready yet","code":"ReplayPending","retryable":true,"sessionId":"` + secretID + `"}`,
+		"prose":           `{"error":"no session ` + secretID + ` here"}`,
+		"url-encoded":     `{"error":"no session pool-abc%3Aorg-123.IDSECRETSIGNATURE here"}`,
+	}
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(404)
+				_, _ = w.Write([]byte(body))
+			}))
+			defer srv.Close()
+			c := newTestClient(t, srv.URL)
+			_, err := c.Sessions.ReplayURL(context.Background(), secretID)
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if strings.Contains(err.Error(), "IDSECRET") {
+				t.Fatalf("error carries the session id: %v", err)
+			}
+			var serr *SolariError
+			if !errors.As(err, &serr) || serr.Status != 404 {
+				t.Fatalf("want a 404 *SolariError, got %#v", err)
+			}
+		})
+	}
+}
+
+func TestErrorBodyCodeSurvivesRedaction(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		_, _ = w.Write([]byte(`{"code":"ReplayPending","retryable":true,"sessionId":"` + secretID + `"}`))
+	}))
+	defer srv.Close()
+	_, err := newTestClient(t, srv.URL).Sessions.ReplayURL(context.Background(), secretID)
+	var serr *SolariError
+	if !errors.As(err, &serr) || serr.Code != "ReplayPending" {
+		t.Fatalf("the code must still be parsed from the raw body: %#v", err)
+	}
+}
