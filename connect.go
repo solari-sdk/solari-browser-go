@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 )
 
@@ -133,7 +135,32 @@ func (a *scrubbingAllocator) Allocate(ctx context.Context, opts ...chromedp.Brow
 		}
 		return nil, &SolariError{Message: "Solari: could not connect to the browser: " + scrubbed.Error(), Err: cause}
 	}
+	ensurePage(dctx, b)
 	return b, nil
+}
+
+// ensurePageTimeout bounds the two best-effort calls of ensurePage.
+const ensurePageTimeout = 10 * time.Second
+
+// ensurePage makes sure the browser has a page for chromedp to attach to. chromedp's first Run asks the browser to announce its
+// targets and then waits, with no bound, for a "page" target to appear: it expects a browser it just launched, which always has
+// one. A pooled Solari browser does not always: on a fresh fast-pool session the announcement came back empty and the first
+// Run waited for ever (about 4 sessions in 6 on staging, 2026-11-11). If the browser reports no page, open one. Best effort: a
+// failure here leaves chromedp to behave as it did before.
+func ensurePage(ctx context.Context, b *chromedp.Browser) {
+	pctx, cancel := context.WithTimeout(ctx, ensurePageTimeout)
+	defer cancel()
+	exec := cdp.WithExecutor(pctx, b)
+	infos, err := target.GetTargets().Do(exec)
+	if err != nil {
+		return
+	}
+	for _, info := range infos {
+		if info.Type == "page" {
+			return
+		}
+	}
+	_, _ = target.CreateTarget("about:blank").Do(exec)
 }
 
 func (a *scrubbingAllocator) Wait() { a.inner.Wait() }
