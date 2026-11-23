@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -192,12 +193,14 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 	}
 
 	var lastErr error
+	delay := t.backoffDuration()
 	for attempt := 1; ; attempt++ {
-		status, raw, err := t.attempt(ctx, method, path, bodyBytes, opts.idempotencyKey, opts.headers)
+		status, raw, retryAfter, err := t.attempt(ctx, method, path, bodyBytes, opts.idempotencyKey, opts.headers)
 		switch {
 		case err != nil:
 			// Transport/network failure — always retryable.
 			lastErr = err
+			delay = t.backoffDuration()
 		case status >= 200 && status < 300:
 			return decodeInto(method, path, raw, out)
 		// A 404 tolerated here is swallowed before the retryable-hint case
@@ -222,6 +225,8 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 			return newHTTPError(method, path, status, raw)
 		default:
 			lastErr = newHTTPError(method, path, status, raw)
+			// A 503 NoCapacity says when to come back (Retry-After: 10): wait that long, not the short fixed backoff.
+			delay = retryAfterDelay(retryAfter, t.backoffDuration(), time.Now())
 		}
 
 		if opts.noRetry {
@@ -230,17 +235,17 @@ func (t *httpTransport) request(ctx context.Context, method, path string, body i
 		if attempt >= t.maxAttempts {
 			return t.exhausted(method, path, lastErr)
 		}
-		if err := t.sleepBackoff(ctx); err != nil {
+		if err := sleepFor(ctx, delay); err != nil {
 			return err
 		}
 	}
 }
 
 // attempt performs one round-trip and fully reads the body.
-func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBytes []byte, idempotencyKey string, headers map[string]string) (int, []byte, error) {
+func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBytes []byte, idempotencyKey string, headers map[string]string) (int, []byte, string, error) {
 	req, err := http.NewRequestWithContext(ctx, method, t.baseURL+path, bytesReader(bodyBytes))
 	if err != nil {
-		return 0, nil, &SolariError{
+		return 0, nil, "", &SolariError{
 			Message: fmt.Sprintf("Solari %s %s: %v", method, redactSessionPath(path), redactErr(err)),
 			Err:     redactErr(err),
 		}
@@ -256,7 +261,7 @@ func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBy
 
 	res, err := t.httpClient.Do(req)
 	if err != nil {
-		return 0, nil, &SolariError{
+		return 0, nil, "", &SolariError{
 			Message: fmt.Sprintf("Solari %s %s: %v", method, redactSessionPath(path), redactErr(err)),
 			Err:     redactErr(err),
 		}
@@ -264,12 +269,12 @@ func (t *httpTransport) attempt(ctx context.Context, method, path string, bodyBy
 	defer res.Body.Close()
 	raw, err := io.ReadAll(res.Body)
 	if err != nil {
-		return 0, nil, &SolariError{
+		return 0, nil, "", &SolariError{
 			Message: fmt.Sprintf("Solari %s %s: reading body failed: %v", method, redactSessionPath(path), redactErr(err)),
 			Err:     redactErr(err),
 		}
 	}
-	return res.StatusCode, raw, nil
+	return res.StatusCode, raw, res.Header.Get("Retry-After"), nil
 }
 
 // exhausted wraps the last failure after every attempt was spent. Unlike the
@@ -303,12 +308,51 @@ func decodeInto(method, path string, raw []byte, out interface{}) error {
 	return nil
 }
 
-// sleepBackoff waits the fixed retry delay, respecting ctx cancellation.
-func (t *httpTransport) sleepBackoff(ctx context.Context) error {
+// backoffDuration is the fixed delay between attempts (0 disables the wait, for tests).
+func (t *httpTransport) backoffDuration() time.Duration {
 	if t.backoffMs <= 0 {
+		return 0
+	}
+	return time.Duration(t.backoffMs) * time.Millisecond
+}
+
+// maxRetryAfter is the longest the SDK waits because a response said Retry-After. A jail kind with no capacity
+// answers 503 NoCapacity with Retry-After: 10 (PARITY B17); an absurd value must not park a caller for minutes.
+const maxRetryAfter = 30 * time.Second
+
+// retryAfterDelay is the delay before the next attempt: the response's Retry-After (delta-seconds or HTTP-date,
+// at least the backoff, at most maxRetryAfter) when it has a usable one, else the backoff.
+func retryAfterDelay(header string, backoff time.Duration, now time.Time) time.Duration {
+	h := strings.TrimSpace(header)
+	if h == "" {
+		return backoff
+	}
+	var d time.Duration
+	if secs, err := strconv.ParseUint(h, 10, 32); err == nil {
+		d = time.Duration(secs) * time.Second
+	} else if at, err := http.ParseTime(h); err == nil {
+		d = at.Sub(now)
+	} else {
+		return backoff
+	}
+	if d < 0 {
+		return backoff
+	}
+	if d < backoff {
+		d = backoff
+	}
+	if d > maxRetryAfter {
+		d = maxRetryAfter
+	}
+	return d
+}
+
+// sleepFor waits d, respecting ctx cancellation.
+func sleepFor(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
 		return ctx.Err()
 	}
-	timer := time.NewTimer(time.Duration(t.backoffMs) * time.Millisecond)
+	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
