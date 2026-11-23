@@ -76,6 +76,9 @@ func TestRetryAfterDelayUnusableValuesFallBack(t *testing.T) {
 			t.Errorf("Retry-After %q: delay = %v, want the backoff %v", h, got, backoff)
 		}
 	}
+	if got := retryAfterDelay("0", backoff, now); got != backoff {
+		t.Errorf("Retry-After: 0 -> %v, want the backoff (never an immediate retry)", got)
+	}
 	if got := retryAfterDelay("10", backoff, now); got != 10*time.Second {
 		t.Errorf("10 -> %v", got)
 	}
@@ -85,4 +88,57 @@ func TestRetryAfterDelayUnusableValuesFallBack(t *testing.T) {
 	if got := retryAfterDelay(now.Add(7*time.Second).Format(http.TimeFormat), backoff, now); got != 7*time.Second {
 		t.Errorf("HTTP-date +7s -> %v", got)
 	}
+	if got := retryAfterDelay(now.Add(time.Hour).Format(http.TimeFormat), backoff, now); got != maxRetryAfter {
+		t.Errorf("HTTP-date +1h -> %v, want the cap", got)
+	}
 }
+
+// The delay does not stick: a 503 with Retry-After, then a connection error, then success. The wait after the connection error is the
+// plain backoff, not the old Retry-After.
+func TestRetryAfterDoesNotStickAfterATransportError(t *testing.T) {
+	var mu sync.Mutex
+	var at []time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		at = append(at, time.Now())
+		n := len(at)
+		mu.Unlock()
+		switch n {
+		case 1:
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"no capacity","code":"NoCapacity"}`))
+		case 2:
+			hj, _ := w.(http.Hijacker)
+			conn, _, _ := hj.Hijack()
+			_, _ = conn.Write([]byte("not http\r\n\r\n")) // a malformed reply: a transport error the HTTP client does not replay by itself
+			_ = conn.Close()
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"sessionId":"s-1","wsEndpoint":"ws://127.0.0.1:1/ws"}`))
+		}
+	}))
+	defer srv.Close()
+	c, err := NewClient(ClientOptions{APIKey: "slr_live_id_secret", BaseURL: srv.URL, BackoffMs: intPtr(10), MaxAttempts: 3})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.Sessions.Create(context.Background(), CreateSessionOptions{}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(at) != 3 {
+		t.Fatalf("attempts = %d, want 3", len(at))
+	}
+	if g := at[1].Sub(at[0]); g < 900*time.Millisecond {
+		t.Errorf("the 503's Retry-After was not honoured (%v)", g)
+	}
+	if g := at[2].Sub(at[1]); g > 800*time.Millisecond {
+		t.Errorf("after the connection error the wait was %v: the plain backoff, not the old Retry-After", g)
+	}
+}
+
+func intPtr(n int) *int { return &n }
